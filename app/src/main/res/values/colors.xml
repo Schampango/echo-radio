@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tile_blue">#00A0E3</color>
+    <color name="tile_blue_dark">#0077AA</color>
+    <color name="ic_launcher_background">#00A0E3</color>
+</resources>
