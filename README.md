@@ -9,6 +9,13 @@ Frei konfigurierbare Senderknöpfe für den Amazon Echo Show 8 (1. Gen, *crown*)
 - **Langer Druck** auf einen Knopf öffnet den Editor jederzeit.
 - Kann als Startbildschirm (Home) gewählt werden.
 
+### Podcasts (Art „Neueste Folge aus Podcast-Feed“)
+
+- Beim Stoppen merkt sich die App Folge und Position (zusätzlich alle 5 Sekunden).
+- Beim nächsten Tipp geht es dort weiter, solange im Feed keine neuere Folge erschienen ist.
+  Eine neue Folge oder eine zu Ende gehörte beginnt von vorne.
+- Unten erscheint ein Fortschrittsbalken; ziehen zum Spulen.
+
 Alle Knöpfe sind gleich groß und sitzen in einem Raster. Die Spaltenzahl wählt die App selbst,
 sodass die Knöpfe möglichst groß werden.
 

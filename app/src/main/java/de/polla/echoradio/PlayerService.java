@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.drawable.Icon;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
@@ -26,24 +27,29 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Spielt Streams im Hintergrund ab, auch wenn der Bildschirm ausgeht.
+ * Spielt Streams und Podcasts im Hintergrund ab, auch wenn der Bildschirm ausgeht.
+ * Bei Podcasts wird die Position gemerkt und beim naechsten Mal fortgesetzt,
+ * solange im Feed keine neuere Folge erschienen ist.
  */
 public class PlayerService extends Service {
 
     static final String ACTION_PLAY = "de.polla.echoradio.PLAY";
     static final String ACTION_STOP = "de.polla.echoradio.STOP";
+    static final String ACTION_SEEK = "de.polla.echoradio.SEEK";
     static final String ACTION_STATE = "de.polla.echoradio.STATE";
 
     static final String EXTRA_ID = "id";
     static final String EXTRA_NAME = "name";
     static final String EXTRA_MODE = "mode";
     static final String EXTRA_VALUE = "value";
+    static final String EXTRA_POSITION = "position";
 
     /** Knopf, der gerade spielt (oder null). Wird von der Oberflaeche gelesen. */
     static volatile String currentId;
@@ -52,13 +58,33 @@ public class PlayerService extends Service {
 
     private static final String CHANNEL = "playback";
     private static final int NOTIFICATION_ID = 1;
+    private static final int AUTOSAVE_MS = 5000;
+    /** Liegt die gemerkte Stelle so knapp vor dem Ende, beginnt die Folge von vorne. */
+    private static final int END_MARGIN_MS = 5000;
+
+    /** Laufende Instanz, nur fuer progress(). Zugriff nur im Haupt-Thread. */
+    private static PlayerService instance;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private MediaPlayer player;
     private WifiManager.WifiLock wifiLock;
+    private SharedPreferences positions;
     /** Wird bei jedem Start/Stopp erhoeht, damit alte Antworten ignoriert werden. */
     private int generation;
+
+    private String playingId;
+    private String playingMode;
+    private String playingUrl;
+    private boolean prepared;
+
+    private final Runnable autosave = new Runnable() {
+        @Override
+        public void run() {
+            savePosition();
+            main.postDelayed(this, AUTOSAVE_MS);
+        }
+    };
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -69,6 +95,8 @@ public class PlayerService extends Service {
     @SuppressWarnings("deprecation")
     public void onCreate() {
         super.onCreate();
+        instance = this;
+        positions = getSharedPreferences("podcast_positions", MODE_PRIVATE);
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(
                 new NotificationChannel(CHANNEL, "Wiedergabe", NotificationManager.IMPORTANCE_LOW));
@@ -87,6 +115,8 @@ public class PlayerService extends Service {
                     intent.getStringExtra(EXTRA_NAME),
                     intent.getStringExtra(EXTRA_MODE),
                     intent.getStringExtra(EXTRA_VALUE));
+        } else if (ACTION_SEEK.equals(action)) {
+            seek(intent.getIntExtra(EXTRA_POSITION, 0));
         } else {
             stopAll(null);
         }
@@ -95,18 +125,56 @@ public class PlayerService extends Service {
 
     @Override
     public void onDestroy() {
+        savePosition();
+        main.removeCallbacks(autosave);
         generation++;
+        prepared = false;
         releasePlayer();
         releaseWifiLock();
         worker.shutdownNow();
+        instance = null;
         super.onDestroy();
+    }
+
+    /**
+     * Position und Dauer des laufenden Podcasts in Millisekunden,
+     * oder null, wenn gerade kein Podcast spielt. Nur im Haupt-Thread aufrufen.
+     */
+    static long[] progress() {
+        PlayerService s = instance;
+        if (s == null || s.player == null || !s.prepared || !Tile.RSS.equals(s.playingMode)) {
+            return null;
+        }
+        try {
+            return new long[]{s.player.getCurrentPosition(), s.player.getDuration()};
+        } catch (IllegalStateException e) {
+            return null;
+        }
+    }
+
+    static String formatTime(long ms) {
+        long total = Math.max(0, ms / 1000);
+        long h = total / 3600;
+        long m = (total % 3600) / 60;
+        long s = total % 60;
+        return h > 0
+                ? String.format(Locale.GERMANY, "%d:%02d:%02d", h, m, s)
+                : String.format(Locale.GERMANY, "%d:%02d", m, s);
     }
 
     // ---------------------------------------------------------------- Wiedergabe
 
     private void play(String id, String name, String mode, String value) {
+        savePosition();
+        main.removeCallbacks(autosave);
+        prepared = false;
         releasePlayer();
+
         final int gen = ++generation;
+        playingId = id;
+        playingMode = mode;
+        playingUrl = null;
+
         startForeground(NOTIFICATION_ID, buildNotification(name, "Verbinde …"));
         if (wifiLock != null) {
             wifiLock.acquire();
@@ -132,21 +200,35 @@ public class PlayerService extends Service {
     }
 
     private void startPlayer(String id, String name, String url, int gen) {
+        playingUrl = url;
+        boolean podcast = Tile.RSS.equals(playingMode);
+        int resumeAt = podcast ? savedPosition(id, url) : 0;
+
         MediaPlayer mp = new MediaPlayer();
         player = mp;
         mp.setAudioAttributes(new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .setContentType(podcast ? AudioAttributes.CONTENT_TYPE_SPEECH : AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build());
         mp.setWakeMode(getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);
         mp.setOnPreparedListener(p -> {
             if (gen != generation) {
                 return;
             }
+            prepared = true;
+            int duration = p.getDuration();
+            boolean resume = resumeAt > 0 && (duration <= 0 || resumeAt < duration - END_MARGIN_MS);
+            if (resume) {
+                p.seekTo(resumeAt);
+            }
             p.start();
-            setState(id, name + " – läuft");
+            String text = resume ? "fortgesetzt bei " + formatTime(resumeAt) : "läuft";
+            setState(id, name + " – " + text);
             getSystemService(NotificationManager.class)
-                    .notify(NOTIFICATION_ID, buildNotification(name, "Läuft"));
+                    .notify(NOTIFICATION_ID, buildNotification(name, text));
+            if (podcast) {
+                main.postDelayed(autosave, AUTOSAVE_MS);
+            }
         });
         mp.setOnErrorListener((p, what, extra) -> {
             if (gen == generation) {
@@ -156,6 +238,11 @@ public class PlayerService extends Service {
         });
         mp.setOnCompletionListener(p -> {
             if (gen == generation) {
+                if (podcast) {
+                    // Folge zu Ende gehoert: naechstes Mal von vorne
+                    clearPosition(id);
+                    prepared = false;
+                }
                 stopAll(name + " beendet");
             }
         });
@@ -167,11 +254,36 @@ public class PlayerService extends Service {
         }
     }
 
+    private void seek(int positionMs) {
+        if (playingId == null) {
+            // Dienst wurde nur fuer das Spulen gestartet, es laeuft aber nichts
+            stopSelf();
+            return;
+        }
+        if (player == null || !prepared) {
+            return;
+        }
+        try {
+            player.seekTo(Math.max(0, positionMs));
+        } catch (IllegalStateException e) {
+            return;
+        }
+        if (Tile.RSS.equals(playingMode) && playingUrl != null) {
+            positions.edit().putString(playingId, Math.max(0, positionMs) + "|" + playingUrl).apply();
+        }
+    }
+
     @SuppressWarnings("deprecation")
     private void stopAll(String message) {
+        savePosition();
+        main.removeCallbacks(autosave);
         generation++;
+        prepared = false;
         releasePlayer();
         releaseWifiLock();
+        playingId = null;
+        playingMode = null;
+        playingUrl = null;
         setState(null, message == null ? "" : message);
         stopForeground(true);
         stopSelf();
@@ -194,6 +306,46 @@ public class PlayerService extends Service {
             wifiLock.release();
         }
     }
+
+    // ---------------------------------------------------------------- Podcast-Positionen
+
+    /** Merkt sich Folge und Stelle des laufenden Podcasts. */
+    private void savePosition() {
+        if (player == null || !prepared || playingId == null || playingUrl == null
+                || !Tile.RSS.equals(playingMode)) {
+            return;
+        }
+        int pos;
+        try {
+            pos = player.getCurrentPosition();
+        } catch (IllegalStateException e) {
+            return;
+        }
+        positions.edit().putString(playingId, pos + "|" + playingUrl).apply();
+    }
+
+    /** Gemerkte Stelle, aber nur wenn es noch dieselbe Folge ist. */
+    private int savedPosition(String id, String url) {
+        String saved = positions.getString(id, null);
+        if (saved == null) {
+            return 0;
+        }
+        int bar = saved.indexOf('|');
+        if (bar < 0 || !saved.substring(bar + 1).equals(url)) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(saved.substring(0, bar));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private void clearPosition(String id) {
+        positions.edit().remove(id).apply();
+    }
+
+    // ---------------------------------------------------------------- Status & Benachrichtigung
 
     private void setState(String id, String text) {
         currentId = id;
@@ -231,7 +383,7 @@ public class PlayerService extends Service {
             String xml = httpGet(value);
             Matcher m = Pattern.compile("<enclosure[^>]*?url=\"([^\"]+)\"").matcher(xml);
             if (!m.find()) {
-                throw new IOException("keine Sendung im Feed gefunden");
+                throw new IOException("keine Folge im Feed gefunden");
             }
             return m.group(1).replace("&amp;", "&");
         }

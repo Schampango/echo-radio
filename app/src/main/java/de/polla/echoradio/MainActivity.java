@@ -20,6 +20,8 @@ import android.graphics.drawable.shapes.OvalShape;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -32,6 +34,7 @@ import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -77,6 +80,21 @@ public class MainActivity extends Activity {
     private TextView editButton;
     private final Map<String, TextView> tileViews = new HashMap<>();
 
+    // Fortschrittsbalken fuer Podcasts
+    private LinearLayout progressRow;
+    private SeekBar seekBar;
+    private TextView positionLabel;
+    private TextView durationLabel;
+    private boolean dragging;
+    private final Handler ticker = new Handler(Looper.getMainLooper());
+    private final Runnable tick = new Runnable() {
+        @Override
+        public void run() {
+            updateProgress();
+            ticker.postDelayed(this, 500);
+        }
+    };
+
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -98,10 +116,12 @@ public class MainActivity extends Activity {
         super.onStart();
         registerReceiver(stateReceiver, new IntentFilter(PlayerService.ACTION_STATE));
         refresh();
+        ticker.post(tick);
     }
 
     @Override
     protected void onStop() {
+        ticker.removeCallbacks(tick);
         unregisterReceiver(stateReceiver);
         super.onStop();
     }
@@ -145,12 +165,52 @@ public class MainActivity extends Activity {
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
 
+        // Links: Statuszeile, darunter (nur bei Podcasts) der Fortschrittsbalken
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setGravity(Gravity.CENTER_VERTICAL);
+        info.setPadding(dp(16), 0, dp(16), 0);
+
         status = new TextView(this);
         status.setTextColor(0xFF444444);
         status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
         status.setSingleLine(true);
-        status.setPadding(dp(16), 0, dp(16), 0);
-        bar.addView(status, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        info.addView(status);
+
+        progressRow = new LinearLayout(this);
+        progressRow.setOrientation(LinearLayout.HORIZONTAL);
+        progressRow.setGravity(Gravity.CENTER_VERTICAL);
+        progressRow.setVisibility(View.GONE);
+        positionLabel = timeLabel();
+        durationLabel = timeLabel();
+        seekBar = new SeekBar(this);
+        seekBar.setPadding(dp(16), dp(10), dp(16), dp(10));
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                if (fromUser) {
+                    positionLabel.setText(PlayerService.formatTime(progress));
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar sb) {
+                dragging = true;
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar sb) {
+                dragging = false;
+                seekTo(sb.getProgress());
+            }
+        });
+        progressRow.addView(positionLabel);
+        progressRow.addView(seekBar, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        progressRow.addView(durationLabel);
+        info.addView(progressRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        bar.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
         editButton = pillButton("Bearbeiten", 0xFF757575);
         editButton.setOnClickListener(x -> toggleEditMode());
@@ -162,8 +222,40 @@ public class MainActivity extends Activity {
         stop.setOnClickListener(x -> stopPlayback());
         bar.addView(stop, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56)));
 
-        root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
+        // Feste Hoehe, damit die Knoepfe nicht springen, wenn der Balken erscheint
+        root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(96)));
         setContentView(root);
+    }
+
+    private TextView timeLabel() {
+        TextView t = new TextView(this);
+        t.setTextColor(0xFF616161);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        t.setText("0:00");
+        return t;
+    }
+
+    /** Zeigt den Fortschrittsbalken, solange ein Podcast laeuft. */
+    private void updateProgress() {
+        long[] p = PlayerService.progress();
+        if (p == null || p[1] <= 0) {
+            progressRow.setVisibility(View.GONE);
+            return;
+        }
+        progressRow.setVisibility(View.VISIBLE);
+        durationLabel.setText(PlayerService.formatTime(p[1]));
+        if (!dragging) {
+            seekBar.setMax((int) p[1]);
+            seekBar.setProgress((int) p[0]);
+            positionLabel.setText(PlayerService.formatTime(p[0]));
+        }
+    }
+
+    private void seekTo(int positionMs) {
+        Intent i = new Intent(this, PlayerService.class);
+        i.setAction(PlayerService.ACTION_SEEK);
+        i.putExtra(PlayerService.EXTRA_POSITION, positionMs);
+        startService(i);
     }
 
     private void toggleEditMode() {
