@@ -227,7 +227,7 @@ public class PlayerService extends Service {
         if (value == null || value.isEmpty()) {
             throw new IOException("keine Adresse eingetragen");
         }
-        if (MainActivity.MODE_RSS.equals(mode)) {
+        if (Tile.RSS.equals(mode)) {
             String xml = httpGet(value);
             Matcher m = Pattern.compile("<enclosure[^>]*?url=\"([^\"]+)\"").matcher(xml);
             if (!m.find()) {
@@ -235,7 +235,7 @@ public class PlayerService extends Service {
             }
             return m.group(1).replace("&amp;", "&");
         }
-        if (MainActivity.MODE_SEARCH.equals(mode) && !value.startsWith("http")) {
+        if (Tile.SEARCH.equals(mode) && !value.startsWith("http")) {
             return searchRadioBrowser(value);
         }
         return value;
