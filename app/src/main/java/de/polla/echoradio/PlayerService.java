@@ -17,6 +17,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.util.Log;
 
 import java.io.IOException;
 import java.net.SocketTimeoutException;
@@ -51,6 +52,7 @@ public class PlayerService extends Service {
     /** Text fuer die Statuszeile. */
     static volatile String currentStatus = "";
 
+    private static final String TAG = "EchoRadio";
     private static final String CHANNEL = "playback";
     private static final int NOTIFICATION_ID = 1;
     private static final int AUTOSAVE_MS = 5000;
@@ -252,12 +254,14 @@ public class PlayerService extends Service {
         worker.execute(() -> {
             try {
                 String url = resolve(mode, value);
+                Log.i(TAG, "Abspielen: " + value + " -> " + url);
                 main.post(() -> {
                     if (t == token) {
                         startPlayer(url, t);
                     }
                 });
             } catch (Exception e) {
+                Log.w(TAG, "Adresse nicht aufgelöst: " + value, e);
                 main.post(() -> {
                     if (t != token) {
                         return;
@@ -315,6 +319,7 @@ public class PlayerService extends Service {
             }
         });
         mp.setOnErrorListener((p, what, extra) -> {
+            Log.w(TAG, "Player-Fehler what=" + what + " extra=" + extra + " url=" + url);
             if (t != token) {
                 return true;
             }
@@ -547,6 +552,9 @@ public class PlayerService extends Service {
     }
 
     private void setState(String id, String text) {
+        if (text != null && !text.isEmpty()) {
+            Log.i(TAG, text);
+        }
         currentId = id;
         currentStatus = text;
         Intent i = new Intent(ACTION_STATE);
