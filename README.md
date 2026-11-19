@@ -60,6 +60,7 @@ Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
 - Unter „Bearbeiten“ → „Klang“: ein Regler pro Frequenzband (beim Echo meist 5 Bänder, ±15 dB),
   Voreinstellungen des Geräts (z. B. Rock, Jazz, Pop) und „Alles auf 0“.
 - Änderungen sind sofort zu hören, „Speichern“ übernimmt sie dauerhaft, „Abbrechen“ stellt den alten Klang wieder her.
+- Auch in der Weboberfläche über „🎚 Klang“ (wird dort sofort gespeichert).
 - Gilt für alle Sender und Podcasts der Radio-App (nicht für andere Apps).
 
 ## Weboberfläche

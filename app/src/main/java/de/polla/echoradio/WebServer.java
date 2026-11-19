@@ -310,6 +310,33 @@ final class WebServer implements Runnable {
                     }
                 }
                 break;
+            case "/api/eq":
+                if ("GET".equals(m)) {
+                    return json(200, Eq.toJson(context));
+                }
+                if ("PUT".equals(m) || "POST".equals(m)) {
+                    try {
+                        Eq.saveJson(context, new JSONObject(req.bodyText()));
+                    } catch (JSONException e) {
+                        return json(400, error("Ungültige Daten: " + e.getMessage()));
+                    }
+                    return json(200, Eq.toJson(context));
+                }
+                break;
+            case "/api/eq/preset":
+                if ("POST".equals(m)) {
+                    int i;
+                    try {
+                        i = Integer.parseInt(String.valueOf(req.query.get("i")));
+                    } catch (NumberFormatException e) {
+                        return json(400, error("Voreinstellung fehlt"));
+                    }
+                    if (!Eq.usePreset(context, i)) {
+                        return json(400, error("Voreinstellung nicht verfügbar"));
+                    }
+                    return json(200, Eq.toJson(context));
+                }
+                break;
             case "/api/apps":
                 if ("GET".equals(m)) {
                     return json(200, new JSONObject().put("apps", apps()));

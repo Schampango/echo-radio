@@ -5,6 +5,9 @@ import android.content.SharedPreferences;
 import android.media.AudioManager;
 import android.media.audiofx.Equalizer;
 import android.util.Log;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Equalizer fuer die Wiedergabe. Alle Player nutzen dieselbe Audio-Sitzung,
@@ -120,6 +123,78 @@ final class Eq {
             e.setEnabled(enabled);
         } catch (RuntimeException ex) {
             Log.w(TAG, "Equalizer: Vorschau fehlgeschlagen", ex);
+        }
+    }
+
+    /** Zustand fuer die Weboberflaeche. */
+    static synchronized JSONObject toJson(Context c) throws JSONException {
+        JSONObject o = new JSONObject();
+        Equalizer e = get(c);
+        if (e == null) {
+            return o.put("available", false);
+        }
+        try {
+            short bands = e.getNumberOfBands();
+            short[] range = e.getBandLevelRange();
+            int[] levels = savedLevels(c, bands);
+            JSONArray arr = new JSONArray();
+            for (short b = 0; b < bands; b++) {
+                arr.put(new JSONObject().put("freq", e.getCenterFreq(b) / 1000).put("level", levels[b]));
+            }
+            JSONArray presets = new JSONArray();
+            for (short i = 0; i < e.getNumberOfPresets(); i++) {
+                presets.put(e.getPresetName(i));
+            }
+            return o.put("available", true)
+                    .put("enabled", isEnabled(c))
+                    .put("min", range[0])
+                    .put("max", range[1])
+                    .put("bands", arr)
+                    .put("presets", presets)
+                    .put("preset", presetName(c));
+        } catch (RuntimeException ex) {
+            return o.put("available", false).put("error", String.valueOf(ex.getMessage()));
+        }
+    }
+
+    /** Aus der Weboberflaeche: speichern und sofort anwenden. */
+    static synchronized void saveJson(Context c, JSONObject body) {
+        Equalizer e = get(c);
+        if (e == null) {
+            return;
+        }
+        short bands = e.getNumberOfBands();
+        short[] range = e.getBandLevelRange();
+        int[] levels = savedLevels(c, bands);
+        JSONArray arr = body.optJSONArray("levels");
+        if (arr != null) {
+            for (int b = 0; b < bands && b < arr.length(); b++) {
+                levels[b] = Math.max(range[0], Math.min(range[1], arr.optInt(b, 0)));
+            }
+        }
+        save(c, body.optBoolean("enabled", isEnabled(c)), levels, body.optString("preset", ""));
+        applySaved(c);
+    }
+
+    /** Voreinstellung des Geraets uebernehmen und speichern. */
+    static synchronized boolean usePreset(Context c, int index) {
+        Equalizer e = get(c);
+        if (e == null || index < 0 || index >= e.getNumberOfPresets()) {
+            return false;
+        }
+        try {
+            e.usePreset((short) index);
+            short bands = e.getNumberOfBands();
+            int[] levels = new int[bands];
+            for (short b = 0; b < bands; b++) {
+                levels[b] = e.getBandLevel(b);
+            }
+            save(c, true, levels, e.getPresetName((short) index));
+            applySaved(c);
+            return true;
+        } catch (RuntimeException ex) {
+            Log.w(TAG, "Equalizer: Voreinstellung fehlgeschlagen", ex);
+            return false;
         }
     }
 

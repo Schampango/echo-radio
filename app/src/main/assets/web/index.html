@@ -91,6 +91,11 @@
   .settings .field { margin: 0; min-width: 220px; }
   .settings select { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; background: #fff; width: 100%; }
   .settings input[type=range] { width: 220px; }
+  .eq-bands { display: flex; flex-wrap: wrap; gap: 10px 26px; width: 100%; }
+  .eq-band { display: grid; grid-template-columns: 70px 220px 64px; align-items: center; gap: 8px; }
+  .eq-band .val { text-align: right; font-variant-numeric: tabular-nums; }
+  .eq-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; width: 100%; }
+  #eqBtn.open { border-color: var(--blue); color: var(--blue); }
   #displayBtn.open { border-color: var(--blue); color: var(--blue); }
 </style>
 </head>
@@ -100,6 +105,7 @@
   <div class="brand">Echo Radio</div>
   <div class="now"><span class="dot" id="nowDot"></span><span id="nowText">Verbinde …</span></div>
   <button class="btn small" id="voiceBtn" title="Sprachsteuerung">🎤 …</button>
+  <button class="btn small" id="eqBtn" title="Equalizer">🎚 Klang</button>
   <button class="btn small" id="displayBtn" title="Display-Einstellungen">🖥 Display</button>
   <div class="vol">🔊 <input type="range" id="volume" min="0" max="100" value="0"> <span id="volText">–</span></div>
   <button class="btn danger" id="stopBtn">Stopp</button>
@@ -108,6 +114,21 @@
 <div class="banner hidden" id="banner">
   <span id="bannerText"></span>
   <button class="btn small" id="reloadBtn">Neu laden</button>
+</div>
+
+<div class="settings hidden" id="eqPanel">
+  <div class="panel">
+    <h2>Klang</h2>
+    <div class="eq-row">
+      <label><input type="checkbox" id="eqOn"> Equalizer an</label>
+      <select id="eqPreset" style="width:auto"></select>
+      <button class="btn small" id="eqReset">Alles auf 0</button>
+      <span class="save-state" id="eqState"></span>
+    </div>
+    <div class="eq-bands" id="eqBands"></div>
+    <p class="note" style="width:100%;margin:0">Änderungen sind sofort zu hören und werden gespeichert.
+      Gilt für alle Sender und Podcasts der Radio-App.</p>
+  </div>
 </div>
 
 <div class="settings hidden" id="settings">
@@ -783,6 +804,101 @@ $("dimSeconds").addEventListener("change", saveSettings);
 $("returnMinutes").addEventListener("change", saveSettings);
 $("dimLevel").addEventListener("input", () => { $("dimLevelText").textContent = levelName($("dimLevel").value); });
 $("dimLevel").addEventListener("change", saveSettings);
+
+// ------------------------------------------------------------ Equalizer
+
+let eq = null;
+let eqTimer = null;
+
+const freqName = (hz) => hz >= 1000 ? (Math.round(hz / 100) / 10).toString().replace(".", ",") + " kHz" : hz + " Hz";
+const dbName = (mb) => { const d = Math.round(mb / 100); return (d > 0 ? "+" : "") + d + " dB"; };
+
+function renderEq() {
+  const box = $("eqBands");
+  if (!eq || !eq.available) {
+    box.replaceChildren(el("p", { class: "note warn", text: "Dieses Gerät bietet keinen Equalizer an." }));
+    return;
+  }
+  $("eqOn").checked = eq.enabled;
+  const sel = $("eqPreset");
+  sel.replaceChildren(el("option", { value: "", text: "Eigene Einstellung" }),
+    ...eq.presets.map((n, i) => el("option", { value: String(i), text: n })));
+  const pi = eq.presets.indexOf(eq.preset);
+  sel.value = pi >= 0 ? String(pi) : "";
+  box.replaceChildren(...eq.bands.map((b, i) => {
+    const val = el("span", { class: "val", text: dbName(b.level) });
+    const r = el("input", { type: "range" });
+    r.min = eq.min; r.max = eq.max; r.step = 100; r.value = b.level;
+    r.addEventListener("input", () => {
+      b.level = +r.value;
+      val.textContent = dbName(b.level);
+      eq.preset = "";
+      $("eqPreset").value = "";
+      if (!eq.enabled) { eq.enabled = true; $("eqOn").checked = true; }
+      scheduleEqSave();
+    });
+    return el("div", { class: "eq-band" }, [el("span", { text: freqName(b.freq) }), r, val]);
+  }));
+}
+
+async function loadEq() {
+  try {
+    eq = await api("GET", "/api/eq");
+    $("eqState").textContent = "";
+  } catch (e) {
+    eq = null;
+    $("eqState").textContent = "Konnte nicht laden: " + e.message;
+  }
+  renderEq();
+}
+
+function scheduleEqSave() {
+  clearTimeout(eqTimer);
+  $("eqState").className = "save-state";
+  $("eqState").textContent = "Speichert …";
+  eqTimer = setTimeout(saveEq, 150);
+}
+
+async function saveEq() {
+  eqTimer = null;
+  try {
+    await api("PUT", "/api/eq", { enabled: eq.enabled, levels: eq.bands.map((b) => b.level), preset: eq.preset || "" });
+    $("eqState").textContent = "✓ Gespeichert";
+  } catch (e) {
+    $("eqState").className = "save-state err";
+    $("eqState").textContent = "Fehler: " + e.message;
+  }
+}
+
+$("eqBtn").addEventListener("click", () => {
+  const box = $("eqPanel");
+  box.classList.toggle("hidden");
+  $("eqBtn").classList.toggle("open", !box.classList.contains("hidden"));
+  if (!box.classList.contains("hidden")) loadEq();
+});
+$("eqOn").addEventListener("change", () => { if (eq) { eq.enabled = $("eqOn").checked; scheduleEqSave(); } });
+$("eqReset").addEventListener("click", () => {
+  if (!eq || !eq.available) return;
+  eq.bands.forEach((b) => { b.level = 0; });
+  eq.preset = "";
+  eq.enabled = true;
+  renderEq();
+  scheduleEqSave();
+});
+$("eqPreset").addEventListener("change", async () => {
+  const v = $("eqPreset").value;
+  if (v === "" || !eq) return;
+  $("eqState").className = "save-state";
+  $("eqState").textContent = "Speichert …";
+  try {
+    eq = await api("POST", "/api/eq/preset?i=" + v);
+    $("eqState").textContent = "✓ Gespeichert";
+  } catch (e) {
+    $("eqState").className = "save-state err";
+    $("eqState").textContent = "Fehler: " + e.message;
+  }
+  renderEq();
+});
 
 load().then(poll);
 setInterval(poll, 2000);
