@@ -18,6 +18,7 @@ import android.graphics.drawable.RippleDrawable;
 import android.graphics.drawable.ShapeDrawable;
 import android.graphics.drawable.shapes.OvalShape;
 import android.media.AudioManager;
+import android.media.audiofx.Equalizer;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -29,6 +30,7 @@ import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
@@ -123,6 +125,7 @@ public class MainActivity extends Activity {
     private TextView backupButton;
     private TextView restoreButton;
     private TextView displayButton;
+    private TextView soundButton;
     private final Map<String, View> tileViews = new HashMap<>();
     private final ExecutorService background = Executors.newSingleThreadExecutor();
 
@@ -426,6 +429,10 @@ public class MainActivity extends Activity {
         displayButton.setOnClickListener(x -> showDisplaySettings());
         bar.addView(displayButton, barButtonParams());
 
+        soundButton = pillButton("Klang", 0xFF5E35B1);
+        soundButton.setOnClickListener(x -> showEqualizer());
+        bar.addView(soundButton, barButtonParams());
+
         editButton = pillButton("Bearbeiten", 0xFF757575);
         editButton.setOnClickListener(x -> toggleEditMode());
         bar.addView(editButton, barButtonParams());
@@ -465,6 +472,7 @@ public class MainActivity extends Activity {
         backupButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
         restoreButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
         displayButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
+        soundButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
         stopButton.setVisibility(editMode ? View.GONE : View.VISIBLE);
     }
 
@@ -1238,6 +1246,199 @@ public class MainActivity extends Activity {
                         RETURN_CHOICES[returnBar.getProgress()]))
                 .setNegativeButton("Abbrechen", null)
                 .show();
+    }
+
+    // ---------------------------------------------------------------- Equalizer
+
+    private static String freqName(int milliHz) {
+        int hz = milliHz / 1000;
+        if (hz >= 1000) {
+            float k = hz / 1000f;
+            return (k == Math.round(k) ? String.valueOf(Math.round(k)) : String.format(java.util.Locale.GERMANY, "%.1f", k)) + " kHz";
+        }
+        return hz + " Hz";
+    }
+
+    private static String dbName(int millibel) {
+        int db = Math.round(millibel / 100f);
+        return (db > 0 ? "+" : "") + db + " dB";
+    }
+
+    private void showEqualizer() {
+        Equalizer eq = Eq.get(this);
+        if (eq == null) {
+            Toast.makeText(this, "Dieses Gerät bietet keinen Equalizer an", Toast.LENGTH_LONG).show();
+            return;
+        }
+        final short bands;
+        final short min;
+        final short max;
+        final int[] centers;
+        final String[] presets;
+        try {
+            bands = eq.getNumberOfBands();
+            short[] range = eq.getBandLevelRange();
+            min = range[0];
+            max = range[1];
+            centers = new int[bands];
+            for (short b = 0; b < bands; b++) {
+                centers[b] = eq.getCenterFreq(b);
+            }
+            presets = new String[eq.getNumberOfPresets()];
+            for (short i = 0; i < presets.length; i++) {
+                presets[i] = eq.getPresetName(i);
+            }
+        } catch (RuntimeException e) {
+            Toast.makeText(this, "Equalizer nicht verfügbar: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        final boolean oldEnabled = Eq.isEnabled(this);
+        final int[] oldLevels = Eq.savedLevels(this, bands);
+        final int[] levels = oldLevels.clone();
+        final String[] preset = {Eq.presetName(this)};
+        // Schieberegler in 1-dB-Schritten
+        final int step = 100;
+
+        int pad = dp(20);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(pad, dp(8), pad, 0);
+
+        CheckBox enabled = new CheckBox(this);
+        enabled.setText("Equalizer an");
+        enabled.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        enabled.setChecked(oldEnabled);
+        box.addView(enabled);
+
+        TextView presetLabel = new TextView(this);
+        presetLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        presetLabel.setTextColor(0xFF6B7785);
+        box.addView(presetLabel);
+
+        SeekBar[] bars = new SeekBar[bands];
+        TextView[] values = new TextView[bands];
+        Runnable updatePreset = () -> presetLabel.setText(preset[0].isEmpty()
+                ? "Eigene Einstellung" : "Voreinstellung: " + preset[0]);
+        updatePreset.run();
+
+        for (short b = 0; b < bands; b++) {
+            final short band = b;
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(6), 0, dp(6));
+
+            TextView name = new TextView(this);
+            name.setText(freqName(centers[b]));
+            name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+            row.addView(name, new LinearLayout.LayoutParams(dp(90), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            SeekBar sb = new SeekBar(this);
+            sb.setMax((max - min) / step);
+            sb.setProgress((levels[b] - min) / step);
+            bars[b] = sb;
+            row.addView(sb, new LinearLayout.LayoutParams(0, dp(48), 1f));
+
+            TextView value = new TextView(this);
+            value.setText(dbName(levels[b]));
+            value.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+            value.setGravity(Gravity.END);
+            values[b] = value;
+            row.addView(value, new LinearLayout.LayoutParams(dp(80), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override
+                public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                    levels[band] = min + p * step;
+                    value.setText(dbName(levels[band]));
+                    if (fromUser) {
+                        preset[0] = "";
+                        updatePreset.run();
+                        if (!enabled.isChecked()) {
+                            enabled.setChecked(true);
+                        }
+                        Eq.preview(enabled.isChecked(), levels);
+                    }
+                }
+
+                @Override
+                public void onStartTrackingTouch(SeekBar s) {
+                }
+
+                @Override
+                public void onStopTrackingTouch(SeekBar s) {
+                }
+            });
+            box.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        enabled.setOnCheckedChangeListener((v, on) -> Eq.preview(on, levels));
+
+        Consumer<int[]> setAll = (newLevels) -> {
+            for (int b = 0; b < bands; b++) {
+                levels[b] = Math.max(min, Math.min(max, newLevels[b]));
+                bars[b].setProgress((levels[b] - min) / step);
+                values[b].setText(dbName(levels[b]));
+            }
+            enabled.setChecked(true);
+            Eq.preview(true, levels);
+        };
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setPadding(0, dp(12), 0, dp(8));
+        TextView presetButton = pillButton("Voreinstellung …", 0xFF757575);
+        presetButton.setOnClickListener(x -> new AlertDialog.Builder(this)
+                .setTitle("Voreinstellung")
+                .setItems(presets, (d, which) -> {
+                    try {
+                        eq.usePreset((short) which);
+                        int[] l = new int[bands];
+                        for (short b = 0; b < bands; b++) {
+                            l[b] = eq.getBandLevel(b);
+                        }
+                        preset[0] = presets[which];
+                        updatePreset.run();
+                        setAll.accept(l);
+                    } catch (RuntimeException e) {
+                        Toast.makeText(this, "Voreinstellung nicht verfügbar", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("Abbrechen", null)
+                .show());
+        presetButton.setEnabled(presets.length > 0);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
+        lp.setMarginEnd(dp(12));
+        buttons.addView(presetButton, lp);
+        TextView reset = pillButton("Alles auf 0", 0xFF757575);
+        reset.setOnClickListener(x -> {
+            preset[0] = "";
+            updatePreset.run();
+            setAll.accept(new int[bands]);
+        });
+        buttons.addView(reset, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
+        box.addView(buttons);
+
+        TextView hint = new TextView(this);
+        hint.setText(PlayerService.currentId == null
+                ? "Tipp: Starte vorher einen Sender, dann hörst du die Änderungen sofort."
+                : "Änderungen sind sofort zu hören.");
+        hint.setTextColor(0xFF6B7785);
+        box.addView(hint);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(box);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Klang")
+                .setView(scroll)
+                .setPositiveButton("Speichern", (d, which) -> {
+                    Eq.save(this, enabled.isChecked(), levels, preset[0]);
+                    Eq.applySaved(this);
+                })
+                .setNegativeButton("Abbrechen", (d, which) -> Eq.preview(oldEnabled, oldLevels))
+                .create();
+        dialog.setOnCancelListener(d -> Eq.preview(oldEnabled, oldLevels));
+        dialog.show();
     }
 
     // ---------------------------------------------------------------- Sichern & Wiederherstellen

@@ -304,6 +304,9 @@ public class PlayerService extends Service {
 
         ExoPlayer p = new ExoPlayer.Builder(this).build();
         player = p;
+        // Feste Sitzung, damit der Equalizer fuer jeden Sender gilt
+        p.setAudioSessionId(Eq.session(this));
+        Eq.get(this);
         p.setAudioAttributes(new AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(podcast ? C.AUDIO_CONTENT_TYPE_SPEECH : C.AUDIO_CONTENT_TYPE_MUSIC)

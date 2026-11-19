@@ -55,6 +55,13 @@ Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
   (zählt ab dem Wechsel in die andere App; braucht „Über anderen Apps einblenden“, s. o.).
 - Einstellen: am Echo unter „Bearbeiten“ → „Display“ oder in der Weboberfläche über „🖥 Display“.
 
+## Klang (Equalizer)
+
+- Unter „Bearbeiten“ → „Klang“: ein Regler pro Frequenzband (beim Echo meist 5 Bänder, ±15 dB),
+  Voreinstellungen des Geräts (z. B. Rock, Jazz, Pop) und „Alles auf 0“.
+- Änderungen sind sofort zu hören, „Speichern“ übernimmt sie dauerhaft, „Abbrechen“ stellt den alten Klang wieder her.
+- Gilt für alle Sender und Podcasts der Radio-App (nicht für andere Apps).
+
 ## Weboberfläche
 
 Die App startet auf dem Echo einen kleinen Webserver: **http://&lt;IP des Echo&gt;:8080**
