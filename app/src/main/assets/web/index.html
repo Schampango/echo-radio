@@ -84,6 +84,14 @@
   .savebar .state { font-size: 13px; color: var(--muted); }
   .savebar .state.ok { color: #2e7d32; }
   .savebar .state.err { color: var(--danger); }
+  .settings { max-width: 1320px; margin: 20px auto 0; padding: 0 20px; }
+  .settings .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px;
+    display: flex; flex-wrap: wrap; gap: 18px 32px; align-items: flex-end; }
+  .settings h2 { margin: 0; font-size: 17px; width: 100%; }
+  .settings .field { margin: 0; min-width: 220px; }
+  .settings select { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; background: #fff; width: 100%; }
+  .settings input[type=range] { width: 220px; }
+  #displayBtn.open { border-color: var(--blue); color: var(--blue); }
 </style>
 </head>
 <body>
@@ -92,6 +100,7 @@
   <div class="brand">Echo Radio</div>
   <div class="now"><span class="dot" id="nowDot"></span><span id="nowText">Verbinde …</span></div>
   <button class="btn small" id="voiceBtn" title="Sprachsteuerung">🎤 …</button>
+  <button class="btn small" id="displayBtn" title="Display-Einstellungen">🖥 Display</button>
   <div class="vol">🔊 <input type="range" id="volume" min="0" max="100" value="0"> <span id="volText">–</span></div>
   <button class="btn danger" id="stopBtn">Stopp</button>
 </header>
@@ -99,6 +108,21 @@
 <div class="banner hidden" id="banner">
   <span id="bannerText"></span>
   <button class="btn small" id="reloadBtn">Neu laden</button>
+</div>
+
+<div class="settings hidden" id="settings">
+  <div class="panel">
+    <h2>Display</h2>
+    <div class="field"><label for="dimSeconds">Abdunkeln nach</label>
+      <select id="dimSeconds"></select></div>
+    <div class="field"><label for="dimLevel">Helligkeit abgedunkelt: <b id="dimLevelText"></b></label>
+      <input type="range" id="dimLevel" min="0" max="30" step="1"></div>
+    <div class="field"><label for="returnMinutes">Aus anderen Apps zurück zur Radio-App nach</label>
+      <select id="returnMinutes"></select></div>
+    <span class="save-state" id="settingsState"></span>
+    <p class="note" style="width:100%;margin:0">Das Display bleibt an, solange die Radio-App vorne ist. Antippen oder „Alexa“ weckt es auf.
+      „Zurück zur Radio-App“ zählt ab dem Start der anderen App und braucht die Berechtigung „Über anderen Apps einblenden“.</p>
+  </div>
 </div>
 
 <main>
@@ -704,6 +728,61 @@ $("voiceBtn").addEventListener("click", async () => {
   try { await api("POST", "/api/voice?on=" + (on ? 1 : 0)); } catch (e) { setSave(e.message, true); }
   setTimeout(poll, 300);
 });
+
+// ------------------------------------------------------------ Display-Einstellungen
+
+const DIM_CHOICES = [0, 15, 30, 60, 120, 300, 600, 1800];
+const RETURN_CHOICES = [0, 1, 2, 5, 10, 30, 60];
+const dimName = (s) => s === 0 ? "nie" : s < 60 ? s + " Sekunden" : (s / 60) + (s === 60 ? " Minute" : " Minuten");
+const returnName = (m) => m === 0 ? "nie" : m + (m === 1 ? " Minute" : " Minuten");
+const levelName = (v) => +v === 0 ? "schwarz" : v + " %";
+
+function fillSelect(sel, choices, name, value) {
+  const list = choices.includes(value) ? choices : [...choices, value].sort((a, b) => a - b);
+  sel.replaceChildren(...list.map((v) => el("option", { value: String(v), text: name(v) })));
+  sel.value = String(value);
+}
+
+async function loadSettings() {
+  try {
+    const s = await api("GET", "/api/settings");
+    fillSelect($("dimSeconds"), DIM_CHOICES, dimName, s.dimSeconds);
+    fillSelect($("returnMinutes"), RETURN_CHOICES, returnName, s.returnMinutes);
+    $("dimLevel").value = s.dimLevel;
+    $("dimLevelText").textContent = levelName(s.dimLevel);
+    $("settingsState").textContent = "";
+  } catch (e) {
+    $("settingsState").textContent = "Konnte nicht laden: " + e.message;
+  }
+}
+
+async function saveSettings() {
+  const st = $("settingsState");
+  st.className = "save-state";
+  st.textContent = "Speichert …";
+  try {
+    await api("PUT", "/api/settings", {
+      dimSeconds: +$("dimSeconds").value,
+      dimLevel: +$("dimLevel").value,
+      returnMinutes: +$("returnMinutes").value,
+    });
+    st.textContent = "✓ Gespeichert";
+  } catch (e) {
+    st.className = "save-state err";
+    st.textContent = "Fehler: " + e.message;
+  }
+}
+
+$("displayBtn").addEventListener("click", () => {
+  const box = $("settings");
+  box.classList.toggle("hidden");
+  $("displayBtn").classList.toggle("open", !box.classList.contains("hidden"));
+  if (!box.classList.contains("hidden")) loadSettings();
+});
+$("dimSeconds").addEventListener("change", saveSettings);
+$("returnMinutes").addEventListener("change", saveSettings);
+$("dimLevel").addEventListener("input", () => { $("dimLevelText").textContent = levelName($("dimLevel").value); });
+$("dimLevel").addEventListener("change", saveSettings);
 
 load().then(poll);
 setInterval(poll, 2000);

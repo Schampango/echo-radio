@@ -298,6 +298,18 @@ final class WebServer implements Runnable {
                     return json(200, status());
                 }
                 break;
+            case "/api/settings":
+                if ("GET".equals(m)) {
+                    return json(200, AppSettings.load(context).toJson());
+                }
+                if ("PUT".equals(m) || "POST".equals(m)) {
+                    try {
+                        return json(200, AppSettings.save(context, new JSONObject(req.bodyText())).toJson());
+                    } catch (JSONException e) {
+                        return json(400, error("Ungültige Daten: " + e.getMessage()));
+                    }
+                }
+                break;
             case "/api/apps":
                 if ("GET".equals(m)) {
                     return json(200, new JSONObject().put("apps", apps()));

@@ -25,6 +25,8 @@ import android.os.Looper;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.WindowManager;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -103,11 +105,24 @@ public class MainActivity extends Activity {
 
     private SwipeFrame gridHolder;
     private ListeningFrame listeningFrame;
+
+    // Abdunkeln
+    /** Nach einem Sprachbefehl so lange hell bleiben (ms). */
+    private static final long VOICE_WAKE_MS = 8000;
+    private AppSettings settings;
+    private View dimOverlay;
+    private boolean dimmed;
+    /** Die Beruehrung, die das Display aufweckt, loest nichts aus. */
+    private boolean swallowTouch;
+    /** Display wurde nur fuer einen Sprachbefehl aufgeweckt. */
+    private boolean voiceWake;
+    private final Runnable dimNow = this::dim;
     private TextView status;
     private TextView editButton;
     private TextView stopButton;
     private TextView backupButton;
     private TextView restoreButton;
+    private TextView displayButton;
     private final Map<String, View> tileViews = new HashMap<>();
     private final ExecutorService background = Executors.newSingleThreadExecutor();
 
@@ -131,9 +146,14 @@ public class MainActivity extends Activity {
         public void onReceive(Context context, Intent intent) {
             if (VoiceService.ACTION_LISTENING.equals(intent.getAction())) {
                 // Liegt der Rand schon ueber allen Apps, nicht doppelt zeichnen
+                int mode = intent.getIntExtra(VoiceService.EXTRA_MODE, ListeningFrame.IDLE);
                 if (!intent.getBooleanExtra(VoiceService.EXTRA_OVERLAY, false) && listeningFrame != null) {
-                    listeningFrame.show(intent.getIntExtra(VoiceService.EXTRA_MODE, ListeningFrame.IDLE));
+                    listeningFrame.show(mode);
                 }
+                onVoice(mode);
+            } else if (AppSettings.ACTION_CHANGED.equals(intent.getAction())) {
+                settings = AppSettings.load(MainActivity.this);
+                wake();
             } else if (TileStore.ACTION_TILES_CHANGED.equals(intent.getAction())) {
                 // In der Weboberflaeche geaendert
                 reloadTiles();
@@ -148,6 +168,9 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         tiles = TileStore.load(this);
         knownRevision = TileStore.revision(this);
+        settings = AppSettings.load(this);
+        // Display bleibt an, solange die App vorne ist; abgedunkelt wird selbst
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // Die Lautstaerketasten am Echo regeln die Musik
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         buildUi();
@@ -179,6 +202,7 @@ public class MainActivity extends Activity {
         IntentFilter filter = new IntentFilter(PlayerService.ACTION_STATE);
         filter.addAction(TileStore.ACTION_TILES_CHANGED);
         filter.addAction(VoiceService.ACTION_LISTENING);
+        filter.addAction(AppSettings.ACTION_CHANGED);
         registerReceiver(stateReceiver, filter);
         // Waehrend die App im Hintergrund war, kann im Browser etwas geaendert worden sein
         if (TileStore.revision(this) != knownRevision) {
@@ -186,12 +210,18 @@ public class MainActivity extends Activity {
         }
         refresh();
         ticker.post(tick);
+        ReturnTimer.cancel();
+        settings = AppSettings.load(this);
+        wake();
     }
 
     @Override
     protected void onStop() {
         ticker.removeCallbacks(tick);
+        ticker.removeCallbacks(dimNow);
         unregisterReceiver(stateReceiver);
+        // Eine andere App ist vorne: spaeter zurueckholen, falls eingestellt
+        ReturnTimer.schedule(this, settings.returnMinutes);
         super.onStop();
     }
 
@@ -206,6 +236,95 @@ public class MainActivity extends Activity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             hideSystemBars();
+        }
+    }
+
+    // ---------------------------------------------------------------- Abdunkeln
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            swallowTouch = dimmed;
+            voiceWake = false;
+            wake();
+        }
+        if (swallowTouch) {
+            // Erste Beruehrung weckt nur auf, damit nicht versehentlich ein Sender startet
+            return true;
+        }
+        return super.dispatchTouchEvent(ev);
+    }
+
+    /** Volle Helligkeit und Zeitschaltung neu starten. */
+    private void wake() {
+        ticker.removeCallbacks(dimNow);
+        if (dimmed) {
+            dimmed = false;
+            applyBrightness();
+        }
+        scheduleDim(settings.dimSeconds * 1000L);
+    }
+
+    private void scheduleDim(long delay) {
+        ticker.removeCallbacks(dimNow);
+        if (settings.dimSeconds > 0) {
+            ticker.postDelayed(dimNow, delay);
+        }
+    }
+
+    private void dim() {
+        if (editMode) {
+            // Beim Bearbeiten nicht stoeren
+            scheduleDim(settings.dimSeconds * 1000L);
+            return;
+        }
+        if (!dimmed && settings.dimSeconds > 0) {
+            dimmed = true;
+            applyBrightness();
+        }
+    }
+
+    private void applyBrightness() {
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        float overlay;
+        if (dimmed) {
+            int level = settings.dimLevel;
+            lp.screenBrightness = Math.max(0.01f, level / 100f);
+            // Unterhalb der kleinsten Hintergrundbeleuchtung mit Schwarz nachhelfen
+            overlay = level == 0 ? 1f : Math.max(0f, 0.6f * (1f - level / 20f));
+        } else {
+            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+            overlay = 0f;
+        }
+        getWindow().setAttributes(lp);
+        if (dimOverlay != null) {
+            dimOverlay.animate().cancel();
+            if (overlay > 0f) {
+                dimOverlay.setVisibility(View.VISIBLE);
+            }
+            dimOverlay.animate().alpha(overlay).setDuration(dimmed ? 1000 : 250)
+                    .withEndAction(() -> {
+                        if (!dimmed) {
+                            dimOverlay.setVisibility(View.GONE);
+                        }
+                    }).start();
+        }
+    }
+
+    /** "Alexa" weckt das Display kurz auf. */
+    private void onVoice(int mode) {
+        if (mode == ListeningFrame.LISTENING) {
+            if (dimmed) {
+                voiceWake = true;
+            }
+            wake();
+            // Waehrend zugehoert wird, hell bleiben
+            ticker.removeCallbacks(dimNow);
+        } else if (voiceWake) {
+            voiceWake = false;
+            scheduleDim(Math.min(VOICE_WAKE_MS, settings.dimSeconds * 1000L));
+        } else {
+            scheduleDim(settings.dimSeconds * 1000L);
         }
     }
 
@@ -303,6 +422,10 @@ public class MainActivity extends Activity {
         restoreButton.setOnClickListener(x -> importTiles());
         bar.addView(restoreButton, barButtonParams());
 
+        displayButton = pillButton("Display", 0xFF5E35B1);
+        displayButton.setOnClickListener(x -> showDisplaySettings());
+        bar.addView(displayButton, barButtonParams());
+
         editButton = pillButton("Bearbeiten", 0xFF757575);
         editButton.setOnClickListener(x -> toggleEditMode());
         bar.addView(editButton, barButtonParams());
@@ -317,6 +440,12 @@ public class MainActivity extends Activity {
         // Rand fuer die Sprachsteuerung liegt ueber allem
         FrameLayout outer = new FrameLayout(this);
         outer.addView(root, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        dimOverlay = new View(this);
+        dimOverlay.setBackgroundColor(Color.BLACK);
+        dimOverlay.setAlpha(0f);
+        dimOverlay.setVisibility(View.GONE);
+        outer.addView(dimOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         listeningFrame = new ListeningFrame(this);
         outer.addView(listeningFrame.view(), new FrameLayout.LayoutParams(
@@ -335,6 +464,7 @@ public class MainActivity extends Activity {
         editButton.setText(editMode ? "Fertig" : "Bearbeiten");
         backupButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
         restoreButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
+        displayButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
         stopButton.setVisibility(editMode ? View.GONE : View.VISIBLE);
     }
 
@@ -1015,6 +1145,97 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("App auswählen")
                 .setItems(names, (d, which) -> onPick.accept(apps.get(which)[1], apps.get(which)[0]))
+                .setNegativeButton("Abbrechen", null)
+                .show();
+    }
+
+    // ---------------------------------------------------------------- Display-Einstellungen
+
+    static final int[] DIM_CHOICES = {0, 15, 30, 60, 120, 300, 600, 1800};
+    static final int[] RETURN_CHOICES = {0, 1, 2, 5, 10, 30, 60};
+
+    private static String dimName(int seconds) {
+        if (seconds == 0) return "nie";
+        if (seconds < 60) return seconds + " Sekunden";
+        return seconds / 60 + (seconds == 60 ? " Minute" : " Minuten");
+    }
+
+    private static String returnName(int minutes) {
+        if (minutes == 0) return "nie";
+        return minutes + (minutes == 1 ? " Minute" : " Minuten");
+    }
+
+    private static int nearest(int[] choices, int value) {
+        int best = 0;
+        for (int i = 1; i < choices.length; i++) {
+            if (Math.abs(choices[i] - value) < Math.abs(choices[best] - value)) best = i;
+        }
+        return best;
+    }
+
+    private void showDisplaySettings() {
+        int pad = dp(20);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(pad, pad, pad, 0);
+
+        int[] sel = {
+                nearest(DIM_CHOICES, settings.dimSeconds),
+                settings.dimLevel,
+                nearest(RETURN_CHOICES, settings.returnMinutes)};
+
+        TextView dimLabel = new TextView(this);
+        SeekBar dimBar = new SeekBar(this);
+        dimBar.setMax(DIM_CHOICES.length - 1);
+        dimBar.setProgress(sel[0]);
+        TextView levelLabel = new TextView(this);
+        SeekBar levelBar = new SeekBar(this);
+        levelBar.setMax(30);
+        levelBar.setProgress(Math.min(30, sel[1]));
+        TextView returnLabel = new TextView(this);
+        SeekBar returnBar = new SeekBar(this);
+        returnBar.setMax(RETURN_CHOICES.length - 1);
+        returnBar.setProgress(sel[2]);
+
+        Runnable labels = () -> {
+            dimLabel.setText("Abdunkeln nach: " + dimName(DIM_CHOICES[dimBar.getProgress()]));
+            levelLabel.setText("Helligkeit abgedunkelt: "
+                    + (levelBar.getProgress() == 0 ? "schwarz" : levelBar.getProgress() + " %"));
+            returnLabel.setText("Aus anderen Apps zurück nach: " + returnName(RETURN_CHOICES[returnBar.getProgress()]));
+        };
+        labels.run();
+        SeekBar.OnSeekBarChangeListener l = new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
+                labels.run();
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar sb) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar sb) {
+            }
+        };
+        dimBar.setOnSeekBarChangeListener(l);
+        levelBar.setOnSeekBarChangeListener(l);
+        returnBar.setOnSeekBarChangeListener(l);
+
+        for (View v : new View[]{dimLabel, dimBar, levelLabel, levelBar, returnLabel, returnBar}) {
+            if (v instanceof TextView) {
+                ((TextView) v).setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+                ((TextView) v).setPadding(0, dp(12), 0, dp(4));
+            }
+            box.addView(v, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Display")
+                .setView(box)
+                .setPositiveButton("Speichern", (d, which) -> settings = AppSettings.save(this,
+                        DIM_CHOICES[dimBar.getProgress()], levelBar.getProgress(),
+                        RETURN_CHOICES[returnBar.getProgress()]))
                 .setNegativeButton("Abbrechen", null)
                 .show();
     }

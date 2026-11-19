@@ -37,6 +37,16 @@ Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
   pulsiert um das Display; danach kurz **grün** (verstanden) oder **orange** (nicht verstanden)
 - Rand auch über anderen Apps (Apple Music, YouTube):
   `adb shell appops set de.polla.echoradio SYSTEM_ALERT_WINDOW allow`, dann 🎤 einmal aus- und einschalten
+
+### Display
+
+- Solange die Radio-App vorne ist, geht das Display nicht aus, sondern wird nach einer
+  einstellbaren Zeit abgedunkelt (Standard: 60 s, Helligkeit 5 %, 0 % = schwarz).
+- Antippen weckt auf (die erste Berührung startet keinen Sender), „Alexa“ weckt für den
+  Sprachbefehl auf und dunkelt danach nach etwa 8 Sekunden wieder ab.
+- Optional holt sich die App nach X Minuten aus anderen Apps wieder nach vorne
+  (zählt ab dem Wechsel in die andere App; braucht „Über anderen Apps einblenden“, s. o.).
+- Einstellen: am Echo unter „Bearbeiten“ → „Display“ oder in der Weboberfläche über „🖥 Display“.
 - „Alexa, spiel DLF“ / „Alexa, Eins Live“ / „Alexa, Nachrichten“ – Name eines Knopfs
 - „Alexa, Stopp“, „Alexa, lauter“, „Alexa, leiser“, „Alexa, Lautstärke 5“
 - Auch mit Pause: „Alexa“ … *piep* … „Deutschlandfunk“
