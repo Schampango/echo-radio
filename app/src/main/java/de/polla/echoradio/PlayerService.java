@@ -5,19 +5,25 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.drawable.Icon;
-import android.media.AudioAttributes;
-import android.media.MediaPlayer;
 import android.net.ConnectivityManager;
 import android.net.Network;
-import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.PowerManager;
 import android.util.Log;
+
+import androidx.media3.common.AudioAttributes;
+import androidx.media3.common.C;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.Metadata;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.extractor.metadata.icy.IcyInfo;
 
 import java.io.IOException;
 import java.net.SocketTimeoutException;
@@ -29,8 +35,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Spielt Streams und Podcasts im Hintergrund ab, auch wenn der Bildschirm ausgeht.
- * - Bricht die Verbindung ab, wird automatisch neu verbunden.
+ * Spielt Streams und Podcasts im Hintergrund ab (mit ExoPlayer), auch wenn der Bildschirm ausgeht.
+ * - Bricht die Verbindung ab oder haengt der Sender, wird automatisch neu verbunden.
  * - Bei Radiostreams wird der laufende Titel angezeigt (falls der Sender ihn mitschickt).
  * - Bei Podcasts wird die Position gemerkt und fortgesetzt, solange keine neuere Folge erschienen ist.
  */
@@ -58,7 +64,7 @@ public class PlayerService extends Service {
     private static final int AUTOSAVE_MS = 5000;
     /** Liegt die gemerkte Stelle so knapp vor dem Ende, beginnt die Folge von vorne. */
     private static final int END_MARGIN_MS = 5000;
-    /** So lange darf der Stream puffern, bevor neu verbunden wird. */
+    /** So lange darf Verbinden oder Puffern dauern, bevor neu verbunden wird. */
     private static final int STALL_MS = 20000;
     /** Wartezeiten zwischen den Neuversuchen in Sekunden; danach immer der letzte Wert. */
     private static final int[] RETRY_DELAYS_S = {3, 5, 10, 20, 30};
@@ -69,12 +75,10 @@ public class PlayerService extends Service {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private MediaPlayer player;
-    private WifiManager.WifiLock wifiLock;
+    private ExoPlayer player;
     private SharedPreferences positions;
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
-    private IcyReader icy;
 
     /** Wird bei jedem Verbindungsversuch und jedem Stopp erhoeht; alte Rueckmeldungen werden ignoriert. */
     private int token;
@@ -89,6 +93,7 @@ public class PlayerService extends Service {
     private boolean prepared;
     /** Ob in dieser Sitzung schon einmal etwas zu hoeren war. */
     private boolean everPlayed;
+    private String lastTitle;
     private int retryCount;
     private boolean waitingForRetry;
     private Runnable retryTask;
@@ -108,7 +113,6 @@ public class PlayerService extends Service {
     }
 
     @Override
-    @SuppressWarnings("deprecation")
     public void onCreate() {
         super.onCreate();
         instance = this;
@@ -116,11 +120,6 @@ public class PlayerService extends Service {
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(
                 new NotificationChannel(CHANNEL, "Wiedergabe", NotificationManager.IMPORTANCE_LOW));
-        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-        if (wm != null) {
-            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "echoradio");
-            wifiLock.setReferenceCounted(false);
-        }
         // Kommt das Netz zurueck, nicht erst die Wartezeit abwarten
         connectivity = getSystemService(ConnectivityManager.class);
         networkCallback = new ConnectivityManager.NetworkCallback() {
@@ -156,11 +155,9 @@ public class PlayerService extends Service {
     public void onDestroy() {
         savePosition();
         cancelTimers();
-        stopIcy();
         token++;
         prepared = false;
         releasePlayer();
-        releaseWifiLock();
         if (networkCallback != null) {
             try {
                 connectivity.unregisterNetworkCallback(networkCallback);
@@ -182,15 +179,12 @@ public class PlayerService extends Service {
         if (s == null || s.player == null || !s.prepared || !Tile.RSS.equals(s.playingMode)) {
             return null;
         }
-        try {
-            return new long[]{s.player.getCurrentPosition(), s.player.getDuration()};
-        } catch (IllegalStateException e) {
-            return null;
-        }
+        long duration = s.player.getDuration();
+        return new long[]{s.player.getCurrentPosition(), duration == C.TIME_UNSET ? 0 : duration};
     }
 
     /** Startet die Wiedergabe eines Knopfs (Stream, Podcast oder Sendersuche). */
-    static void play(android.content.Context context, Tile t) {
+    static void play(Context context, Tile t) {
         Intent i = new Intent(context, PlayerService.class);
         i.setAction(ACTION_PLAY);
         i.putExtra(EXTRA_ID, t.id);
@@ -201,7 +195,7 @@ public class PlayerService extends Service {
     }
 
     /** Stoppt die Wiedergabe, falls etwas laeuft. */
-    static void stop(android.content.Context context) {
+    static void stop(Context context) {
         if (currentId == null) {
             return;
         }
@@ -225,7 +219,6 @@ public class PlayerService extends Service {
     private void play(String id, String name, String mode, String value) {
         savePosition();
         cancelTimers();
-        stopIcy();
         prepared = false;
         releasePlayer();
 
@@ -238,9 +231,6 @@ public class PlayerService extends Service {
         retryCount = 0;
 
         startForeground(NOTIFICATION_ID, buildNotification(name, "Verbinde …"));
-        if (wifiLock != null) {
-            wifiLock.acquire();
-        }
         setState(id, name + " – verbinde …");
         attempt();
     }
@@ -278,97 +268,128 @@ public class PlayerService extends Service {
 
     private void startPlayer(String url, int t) {
         playingUrl = url;
+        lastTitle = null;
         final String id = playingId;
         final String name = playingName;
         final boolean podcast = Tile.RSS.equals(playingMode);
         final int resumeAt = podcast ? savedPosition(id, url) : 0;
 
-        MediaPlayer mp = new MediaPlayer();
-        player = mp;
-        mp.setAudioAttributes(new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(podcast ? AudioAttributes.CONTENT_TYPE_SPEECH : AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build());
-        mp.setWakeMode(getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);
+        ExoPlayer p = new ExoPlayer.Builder(this).build();
+        player = p;
+        p.setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(podcast ? C.AUDIO_CONTENT_TYPE_SPEECH : C.AUDIO_CONTENT_TYPE_MUSIC)
+                .build(), false);
+        // Haelt CPU und WLAN wach, solange gespielt wird
+        p.setWakeMode(C.WAKE_MODE_NETWORK);
+        p.addListener(new Player.Listener() {
+            private boolean started;
 
-        mp.setOnPreparedListener(p -> {
-            if (t != token) {
-                return;
+            @Override
+            public void onPlaybackStateChanged(int state) {
+                if (t != token) {
+                    return;
+                }
+                if (state == Player.STATE_READY) {
+                    removeStallCheck();
+                    if (!started) {
+                        started = true;
+                        onStarted(p, resumeAt, podcast, url);
+                    }
+                } else if (state == Player.STATE_BUFFERING) {
+                    if (started) {
+                        scheduleStallCheck("Stream hängt", t);
+                    }
+                } else if (state == Player.STATE_ENDED) {
+                    if (podcast) {
+                        // Folge zu Ende gehoert: naechstes Mal von vorne
+                        clearPosition(id);
+                        prepared = false;
+                        stopAll(name + " beendet");
+                    } else {
+                        // Ein Radiostream endet nie von selbst
+                        connectionLost("Stream abgebrochen", t);
+                    }
+                }
             }
-            prepared = true;
-            boolean reconnected = retryCount > 0;
-            everPlayed = true;
-            retryCount = 0;
-            int duration = p.getDuration();
-            boolean resume = resumeAt > 0 && (duration <= 0 || resumeAt < duration - END_MARGIN_MS);
+
+            @Override
+            public void onPlayerError(PlaybackException error) {
+                Log.w(TAG, "Player-Fehler " + error.getErrorCodeName() + " url=" + url, error);
+                if (t != token) {
+                    return;
+                }
+                int code = error.errorCode;
+                boolean unplayable = code == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED
+                        || code == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+                        || code == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED;
+                if (unplayable && !everPlayed) {
+                    stopAll(name + ": Format wird nicht unterstützt");
+                } else {
+                    connectionLost("Verbindung unterbrochen", t);
+                }
+            }
+
+            @Override
+            public void onMetadata(Metadata metadata) {
+                if (t != token || podcast) {
+                    return;
+                }
+                for (int i = 0; i < metadata.length(); i++) {
+                    Metadata.Entry entry = metadata.get(i);
+                    if (entry instanceof IcyInfo) {
+                        String title = ((IcyInfo) entry).title;
+                        if (title != null && !title.trim().isEmpty() && !title.trim().equals(lastTitle)) {
+                            lastTitle = title.trim();
+                            showText(lastTitle);
+                        }
+                    }
+                }
+            }
+        });
+        p.setMediaItem(MediaItem.fromUri(url));
+        // Bei Podcasts erst an die gemerkte Stelle springen, dann abspielen
+        p.setPlayWhenReady(resumeAt <= 0);
+        p.prepare();
+        scheduleStallCheck("keine Antwort vom Sender", t);
+    }
+
+    /** Der Player ist zum ersten Mal bereit. */
+    private void onStarted(ExoPlayer p, int resumeAt, boolean podcast, String url) {
+        prepared = true;
+        boolean reconnected = retryCount > 0;
+        everPlayed = true;
+        retryCount = 0;
+        boolean resume = false;
+        if (resumeAt > 0) {
+            long duration = p.getDuration();
+            resume = duration == C.TIME_UNSET || duration <= 0 || resumeAt < duration - END_MARGIN_MS;
             if (resume) {
                 p.seekTo(resumeAt);
             }
-            p.start();
-            String text;
-            if (resume) {
-                text = (reconnected ? "wieder verbunden, " : "fortgesetzt bei ") + formatTime(resumeAt);
-            } else {
-                text = reconnected ? "wieder verbunden" : "läuft";
-            }
-            showText(text);
-            if (podcast) {
-                main.postDelayed(autosave, AUTOSAVE_MS);
-            } else {
-                startIcy(url, t);
-            }
-        });
-        mp.setOnErrorListener((p, what, extra) -> {
-            Log.w(TAG, "Player-Fehler what=" + what + " extra=" + extra + " url=" + url);
-            if (t != token) {
-                return true;
-            }
-            boolean unplayable = extra == MediaPlayer.MEDIA_ERROR_UNSUPPORTED
-                    || extra == MediaPlayer.MEDIA_ERROR_MALFORMED;
-            if (unplayable && !everPlayed) {
-                stopAll(name + ": Format wird nicht unterstützt");
-            } else {
-                connectionLost("Verbindung unterbrochen", t);
-            }
-            return true;
-        });
-        mp.setOnCompletionListener(p -> {
-            if (t != token) {
-                return;
-            }
-            if (podcast) {
-                // Folge zu Ende gehoert: naechstes Mal von vorne
-                clearPosition(id);
-                prepared = false;
-                stopAll(name + " beendet");
-            } else {
-                // Ein Radiostream endet nie von selbst
-                connectionLost("Stream abgebrochen", t);
-            }
-        });
-        mp.setOnInfoListener((p, what, extra) -> {
-            if (t != token) {
-                return false;
-            }
-            if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) {
-                removeStallCheck();
-                stallTask = () -> {
-                    if (t == token) {
-                        connectionLost("Stream hängt", t);
-                    }
-                };
-                main.postDelayed(stallTask, STALL_MS);
-            } else if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) {
-                removeStallCheck();
-            }
-            return false;
-        });
-        try {
-            mp.setDataSource(url);
-            mp.prepareAsync();
-        } catch (IOException | IllegalArgumentException | IllegalStateException | SecurityException e) {
-            connectionLost(describe(e), t);
+            p.play();
         }
+        String text;
+        if (resume) {
+            text = (reconnected ? "wieder verbunden, " : "fortgesetzt bei ") + formatTime(resumeAt);
+        } else {
+            text = reconnected ? "wieder verbunden" : "läuft";
+        }
+        showText(text);
+        if (podcast) {
+            main.postDelayed(autosave, AUTOSAVE_MS);
+        }
+        Log.i(TAG, "Spielt: " + url);
+    }
+
+    private void scheduleStallCheck(String reason, int t) {
+        removeStallCheck();
+        stallTask = () -> {
+            if (t == token) {
+                connectionLost(reason, t);
+            }
+        };
+        main.postDelayed(stallTask, STALL_MS);
     }
 
     /** Verbindung verloren: aufraeumen und nach einer Pause neu versuchen. */
@@ -376,10 +397,10 @@ public class PlayerService extends Service {
         if (t != token || playingId == null) {
             return;
         }
+        Log.w(TAG, playingName + ": " + reason);
         savePosition();
         main.removeCallbacks(autosave);
         removeStallCheck();
-        stopIcy();
         prepared = false;
         releasePlayer();
         token++; // Rueckmeldungen dieses Versuchs ignorieren
@@ -418,11 +439,7 @@ public class PlayerService extends Service {
             return;
         }
         int pos = Math.max(0, positionMs);
-        try {
-            player.seekTo(pos);
-        } catch (IllegalStateException e) {
-            return;
-        }
+        player.seekTo(pos);
         if (Tile.RSS.equals(playingMode) && playingUrl != null) {
             positions.edit().putString(playingId, pos + "|" + playingUrl).apply();
         }
@@ -432,12 +449,10 @@ public class PlayerService extends Service {
     private void stopAll(String message) {
         savePosition();
         cancelTimers();
-        stopIcy();
         token++;
         waitingForRetry = false;
         prepared = false;
         releasePlayer();
-        releaseWifiLock();
         playingId = null;
         playingName = null;
         playingMode = null;
@@ -466,38 +481,8 @@ public class PlayerService extends Service {
 
     private void releasePlayer() {
         if (player != null) {
-            try {
-                player.reset();
-            } catch (Exception ignored) {
-                // egal, wird gleich freigegeben
-            }
             player.release();
             player = null;
-        }
-    }
-
-    private void releaseWifiLock() {
-        if (wifiLock != null && wifiLock.isHeld()) {
-            wifiLock.release();
-        }
-    }
-
-    // ---------------------------------------------------------------- Titel (ICY)
-
-    private void startIcy(String url, int t) {
-        stopIcy();
-        icy = new IcyReader(url, title -> main.post(() -> {
-            if (t == token && playingId != null) {
-                showText(title);
-            }
-        }));
-        icy.start();
-    }
-
-    private void stopIcy() {
-        if (icy != null) {
-            icy.stop();
-            icy = null;
         }
     }
 
@@ -509,12 +494,7 @@ public class PlayerService extends Service {
                 || !Tile.RSS.equals(playingMode)) {
             return;
         }
-        int pos;
-        try {
-            pos = player.getCurrentPosition();
-        } catch (IllegalStateException e) {
-            return;
-        }
+        long pos = player.getCurrentPosition();
         positions.edit().putString(playingId, pos + "|" + playingUrl).apply();
     }
 
@@ -529,7 +509,7 @@ public class PlayerService extends Service {
             return 0;
         }
         try {
-            return Integer.parseInt(saved.substring(0, bar));
+            return (int) Long.parseLong(saved.substring(0, bar));
         } catch (NumberFormatException e) {
             return 0;
         }
@@ -598,8 +578,7 @@ public class PlayerService extends Service {
         if (Tile.SEARCH.equals(mode) && !value.startsWith("http")) {
             stream = RadioBrowser.findStreamUrl(value);
         }
-        // Weiterleitungen (z. B. Lastverteiler) selbst aufloesen; der Android-Player
-        // kommt damit nicht immer zurecht
+        // Weiterleitungen (z. B. Lastverteiler) selbst aufloesen
         return Http.finalUrl(stream);
     }
 

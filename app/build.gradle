@@ -11,8 +11,8 @@ android {
         minSdk 26
         // Der Echo Show laeuft mit LineageOS 18.1 = Android 11 (API 30)
         targetSdk 30
-        versionCode 7
-        versionName '1.4.2'
+        versionCode 8
+        versionName '1.5'
     }
 
     buildTypes {
@@ -30,4 +30,11 @@ android {
         abortOnError false
         checkReleaseBuilds false
     }
+}
+
+dependencies {
+    // ExoPlayer (Media3): spielt auch AAC-Streams zuverlaessig und liefert Songtitel (ICY)
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    implementation 'androidx.media3:media3-extractor:1.4.1'
+    implementation 'androidx.media3:media3-common:1.4.1'
 }

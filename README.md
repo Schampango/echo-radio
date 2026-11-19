@@ -15,7 +15,8 @@ Frei konfigurierbare Senderknöpfe für den Amazon Echo Show 8 (1. Gen, *crown*)
 - Bricht die Verbindung ab (WLAN-Aussetzer, Stream hängt > 20 s), verbindet die App automatisch neu:
   nach 3, 5, 10, 20, dann alle 30 s, höchstens 20 Versuche. Kommt das WLAN zurück, sofort.
 - Schickt der Sender Titel und Interpret mit (ICY-Metadaten), stehen sie in der Statuszeile.
-  Dafür liest die App den Stream über eine zweite Verbindung mit (doppelte Datenmenge).
+- Abgespielt wird mit ExoPlayer (Media3); der läuft auch mit reinen AAC-Streams wie Brillux Radio.
+- Fehlersuche: `adb logcat -s EchoRadio:*`
 
 ### Podcasts (Art „Neueste Folge aus Podcast-Feed“)
 
