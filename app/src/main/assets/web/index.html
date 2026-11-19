@@ -78,6 +78,10 @@
   .empty { color: var(--muted); text-align: center; padding: 40px 10px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 6px; }
   .actions .spacer { flex: 1; }
+  .savebar { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .savebar .state { font-size: 13px; color: var(--muted); }
+  .savebar .state.ok { color: #2e7d32; }
+  .savebar .state.err { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -168,10 +172,24 @@ function newId() {
   return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
 }
 
+let saveText = "";
+let saveError = false;
+
 function setSave(text, isError) {
+  saveText = text;
+  saveError = !!isError;
   const s = $("saveState");
   s.textContent = text;
-  s.classList.toggle("err", !!isError);
+  s.classList.toggle("err", saveError);
+  updateEditorSaveState();
+}
+
+function updateEditorSaveState() {
+  const st = document.querySelector("#editor .savebar .state");
+  if (!st) return;
+  const clean = !saveTimer && !saving && !saveError && !conflict;
+  st.textContent = clean ? "✓ Gespeichert – Änderungen gehen automatisch an den Echo" : saveText;
+  st.className = "state" + (saveError || conflict ? " err" : clean ? " ok" : "");
 }
 
 function showBanner(text) {
@@ -207,7 +225,7 @@ async function load() {
     if (selectedId && !tiles.find((t) => t.id === selectedId)) selectedId = null;
     renderGrid();
     renderEditor();
-    setSave("");
+    setSave("✓ Gespeichert");
   } catch (e) {
     setSave("Echo nicht erreichbar: " + e.message, true);
   }
@@ -215,9 +233,9 @@ async function load() {
 
 function scheduleSave() {
   if (conflict) return;
-  setSave("Ungespeichert …");
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { saveTimer = null; save(); }, 600);
+  setSave("Ungespeichert …");
 }
 
 async function save() {
@@ -228,7 +246,7 @@ async function save() {
   try {
     const d = await api("PUT", "/api/tiles", { revision, tiles });
     revision = d.revision;
-    setSave("Auf dem Echo gespeichert ✓");
+    setSave("✓ Auf dem Echo gespeichert");
   } catch (e) {
     if (e.status === 409) {
       conflict = true;
@@ -469,6 +487,14 @@ function renderEditor() {
   if (idx === 0) actions.children[t.type !== "app" ? 1 : 0].disabled = true;
   if (idx === tiles.length - 1) actions.children[t.type !== "app" ? 2 : 1].disabled = true;
   box.append(actions);
+
+  const saveBtn = el("button", { class: "btn primary small", text: "Speichern", onclick: async () => {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    await save();
+  } });
+  box.append(el("div", { class: "savebar" }, [saveBtn, el("span", { class: "state" })]));
+  updateEditorSaveState();
 }
 
 async function searchLogos(t, results, logoInput, updateNote, changed) {
