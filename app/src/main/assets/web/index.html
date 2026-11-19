@@ -168,6 +168,7 @@
       <select id="dimSeconds"></select></div>
     <div class="field"><label for="dimLevel">Helligkeit abgedunkelt: <b id="dimLevelText"></b></label>
       <input type="range" id="dimLevel" min="0" max="30" step="1"></div>
+    <div class="field"><label><input type="checkbox" id="showClock"> Beim Abdunkeln Uhr und laufenden Titel zeigen</label></div>
     <div class="field"><label for="returnMinutes">Aus anderen Apps zurück zur Radio-App nach</label>
       <select id="returnMinutes"></select></div>
     <span class="save-state" id="settingsState"></span>
@@ -787,7 +788,7 @@ const DIM_CHOICES = [0, 15, 30, 60, 120, 300, 600, 1800];
 const RETURN_CHOICES = [0, 1, 2, 5, 10, 30, 60];
 const dimName = (s) => s === 0 ? "nie" : s < 60 ? s + " Sekunden" : (s / 60) + (s === 60 ? " Minute" : " Minuten");
 const returnName = (m) => m === 0 ? "nie" : m + (m === 1 ? " Minute" : " Minuten");
-const levelName = (v) => +v === 0 ? "schwarz" : v + " %";
+const levelName = (v) => +v === 0 ? ($("showClock").checked ? "minimal" : "schwarz") : v + " %";
 
 function fillSelect(sel, choices, name, value) {
   const list = choices.includes(value) ? choices : [...choices, value].sort((a, b) => a - b);
@@ -800,6 +801,7 @@ async function loadSettings() {
     const s = await api("GET", "/api/settings");
     fillSelect($("dimSeconds"), DIM_CHOICES, dimName, s.dimSeconds);
     fillSelect($("returnMinutes"), RETURN_CHOICES, returnName, s.returnMinutes);
+    $("showClock").checked = s.showClock !== false;
     $("dimLevel").value = s.dimLevel;
     $("dimLevelText").textContent = levelName(s.dimLevel);
     $("settingsState").textContent = "";
@@ -817,6 +819,7 @@ async function saveSettings() {
       dimSeconds: +$("dimSeconds").value,
       dimLevel: +$("dimLevel").value,
       returnMinutes: +$("returnMinutes").value,
+      showClock: $("showClock").checked,
     });
     st.textContent = "✓ Gespeichert";
   } catch (e) {
@@ -835,6 +838,10 @@ $("dimSeconds").addEventListener("change", saveSettings);
 $("returnMinutes").addEventListener("change", saveSettings);
 $("dimLevel").addEventListener("input", () => { $("dimLevelText").textContent = levelName($("dimLevel").value); });
 $("dimLevel").addEventListener("change", saveSettings);
+$("showClock").addEventListener("change", () => {
+  $("dimLevelText").textContent = levelName($("dimLevel").value);
+  saveSettings();
+});
 
 // ------------------------------------------------------------ Woerter der Sprachsteuerung
 

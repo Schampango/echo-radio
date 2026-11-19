@@ -53,6 +53,8 @@ Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
 
 - Solange die Radio-App vorne ist, geht das Display nicht aus, sondern wird nach einer
   einstellbaren Zeit abgedunkelt (Standard: 60 s, Helligkeit 5 %, 0 % = schwarz).
+- Abgedunkelt erscheint eine **Uhr** mit Datum und dem, was gerade läuft
+  (Sender, Interpret, Titel); abschaltbar unter „Display“.
 - Antippen weckt auf (die erste Berührung startet keinen Sender), „Alexa“ weckt für den
   Sprachbefehl auf und dunkelt danach nach etwa 8 Sekunden wieder ab.
 - Optional holt sich die App nach X Minuten aus anderen Apps wieder nach vorne

@@ -113,6 +113,7 @@ public class MainActivity extends Activity {
     private static final long VOICE_WAKE_MS = 8000;
     private AppSettings settings;
     private View dimOverlay;
+    private ClockView clockView;
     private boolean dimmed;
     /** Die Beruehrung, die das Display aufweckt, loest nichts aus. */
     private boolean swallowTouch;
@@ -140,6 +141,9 @@ public class MainActivity extends Activity {
         @Override
         public void run() {
             updateProgress();
+            if (dimmed && clockView != null && clockView.getVisibility() == View.VISIBLE) {
+                clockView.update();
+            }
             ticker.postDelayed(this, 500);
         }
     };
@@ -290,16 +294,28 @@ public class MainActivity extends Activity {
     private void applyBrightness() {
         WindowManager.LayoutParams lp = getWindow().getAttributes();
         float overlay;
+        boolean clock = dimmed && settings.showClock;
         if (dimmed) {
             int level = settings.dimLevel;
             lp.screenBrightness = Math.max(0.01f, level / 100f);
             // Unterhalb der kleinsten Hintergrundbeleuchtung mit Schwarz nachhelfen
-            overlay = level == 0 ? 1f : Math.max(0f, 0.6f * (1f - level / 20f));
+            overlay = clock ? 0f : level == 0 ? 1f : Math.max(0f, 0.6f * (1f - level / 20f));
         } else {
             lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
             overlay = 0f;
         }
         getWindow().setAttributes(lp);
+        if (clockView != null) {
+            clockView.animate().cancel();
+            if (clock) {
+                clockView.update();
+                clockView.setVisibility(View.VISIBLE);
+                clockView.animate().alpha(1f).setDuration(1000).start();
+            } else if (clockView.getVisibility() == View.VISIBLE) {
+                clockView.animate().alpha(0f).setDuration(250)
+                        .withEndAction(() -> clockView.setVisibility(View.GONE)).start();
+            }
+        }
         if (dimOverlay != null) {
             dimOverlay.animate().cancel();
             if (overlay > 0f) {
@@ -453,6 +469,11 @@ public class MainActivity extends Activity {
         dimOverlay.setAlpha(0f);
         dimOverlay.setVisibility(View.GONE);
         outer.addView(dimOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        clockView = new ClockView(this);
+        clockView.setAlpha(0f);
+        clockView.setVisibility(View.GONE);
+        outer.addView(clockView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         listeningFrame = new ListeningFrame(this);
         outer.addView(listeningFrame.view(), new FrameLayout.LayoutParams(
@@ -1200,6 +1221,10 @@ public class MainActivity extends Activity {
         SeekBar levelBar = new SeekBar(this);
         levelBar.setMax(30);
         levelBar.setProgress(Math.min(30, sel[1]));
+        CheckBox clockBox = new CheckBox(this);
+        clockBox.setText("Beim Abdunkeln Uhr und laufenden Titel zeigen");
+        clockBox.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        clockBox.setChecked(settings.showClock);
         TextView returnLabel = new TextView(this);
         SeekBar returnBar = new SeekBar(this);
         returnBar.setMax(RETURN_CHOICES.length - 1);
@@ -1208,7 +1233,8 @@ public class MainActivity extends Activity {
         Runnable labels = () -> {
             dimLabel.setText("Abdunkeln nach: " + dimName(DIM_CHOICES[dimBar.getProgress()]));
             levelLabel.setText("Helligkeit abgedunkelt: "
-                    + (levelBar.getProgress() == 0 ? "schwarz" : levelBar.getProgress() + " %"));
+                    + (levelBar.getProgress() == 0 ? (clockBox.isChecked() ? "minimal" : "schwarz")
+                    : levelBar.getProgress() + " %"));
             returnLabel.setText("Aus anderen Apps zurück nach: " + returnName(RETURN_CHOICES[returnBar.getProgress()]));
         };
         labels.run();
@@ -1229,8 +1255,9 @@ public class MainActivity extends Activity {
         dimBar.setOnSeekBarChangeListener(l);
         levelBar.setOnSeekBarChangeListener(l);
         returnBar.setOnSeekBarChangeListener(l);
+        clockBox.setOnCheckedChangeListener((v, on) -> labels.run());
 
-        for (View v : new View[]{dimLabel, dimBar, levelLabel, levelBar, returnLabel, returnBar}) {
+        for (View v : new View[]{dimLabel, dimBar, levelLabel, levelBar, clockBox, returnLabel, returnBar}) {
             if (v instanceof TextView) {
                 ((TextView) v).setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
                 ((TextView) v).setPadding(0, dp(12), 0, dp(4));
@@ -1243,7 +1270,7 @@ public class MainActivity extends Activity {
                 .setView(box)
                 .setPositiveButton("Speichern", (d, which) -> settings = AppSettings.save(this,
                         DIM_CHOICES[dimBar.getProgress()], levelBar.getProgress(),
-                        RETURN_CHOICES[returnBar.getProgress()]))
+                        RETURN_CHOICES[returnBar.getProgress()], clockBox.isChecked()))
                 .setNegativeButton("Abbrechen", null)
                 .show();
     }

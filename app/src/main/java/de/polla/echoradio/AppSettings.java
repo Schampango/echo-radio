@@ -15,6 +15,7 @@ final class AppSettings {
     private static final String DIM_SECONDS = "dim_seconds";
     private static final String DIM_LEVEL = "dim_level";
     private static final String RETURN_MINUTES = "return_minutes";
+    private static final String SHOW_CLOCK = "show_clock";
 
     /** Abdunkeln nach so vielen Sekunden ohne Beruehrung, 0 = nie. */
     final int dimSeconds;
@@ -22,8 +23,11 @@ final class AppSettings {
     final int dimLevel;
     /** Aus einer anderen App nach so vielen Minuten zurueck zur Radio-App, 0 = nie. */
     final int returnMinutes;
+    /** Im abgedunkelten Zustand Uhr und laufenden Titel zeigen. */
+    final boolean showClock;
 
-    private AppSettings(int dimSeconds, int dimLevel, int returnMinutes) {
+    private AppSettings(int dimSeconds, int dimLevel, int returnMinutes, boolean showClock) {
+        this.showClock = showClock;
         this.dimSeconds = clamp(dimSeconds, 0, 3600);
         this.dimLevel = clamp(dimLevel, 0, 100);
         this.returnMinutes = clamp(returnMinutes, 0, 240);
@@ -31,16 +35,18 @@ final class AppSettings {
 
     static AppSettings load(Context c) {
         SharedPreferences p = prefs(c);
-        return new AppSettings(p.getInt(DIM_SECONDS, 60), p.getInt(DIM_LEVEL, 5), p.getInt(RETURN_MINUTES, 0));
+        return new AppSettings(p.getInt(DIM_SECONDS, 60), p.getInt(DIM_LEVEL, 5), p.getInt(RETURN_MINUTES, 0),
+                p.getBoolean(SHOW_CLOCK, true));
     }
 
     /** Speichert und sagt der App Bescheid. */
-    static AppSettings save(Context c, int dimSeconds, int dimLevel, int returnMinutes) {
-        AppSettings s = new AppSettings(dimSeconds, dimLevel, returnMinutes);
+    static AppSettings save(Context c, int dimSeconds, int dimLevel, int returnMinutes, boolean showClock) {
+        AppSettings s = new AppSettings(dimSeconds, dimLevel, returnMinutes, showClock);
         prefs(c).edit()
                 .putInt(DIM_SECONDS, s.dimSeconds)
                 .putInt(DIM_LEVEL, s.dimLevel)
                 .putInt(RETURN_MINUTES, s.returnMinutes)
+                .putBoolean(SHOW_CLOCK, s.showClock)
                 .apply();
         c.sendBroadcast(new Intent(ACTION_CHANGED).setPackage(c.getPackageName()));
         return s;
@@ -52,14 +58,16 @@ final class AppSettings {
         return save(c,
                 o.optInt("dimSeconds", old.dimSeconds),
                 o.optInt("dimLevel", old.dimLevel),
-                o.optInt("returnMinutes", old.returnMinutes));
+                o.optInt("returnMinutes", old.returnMinutes),
+                o.optBoolean("showClock", old.showClock));
     }
 
     JSONObject toJson() throws JSONException {
         return new JSONObject()
                 .put("dimSeconds", dimSeconds)
                 .put("dimLevel", dimLevel)
-                .put("returnMinutes", returnMinutes);
+                .put("returnMinutes", returnMinutes)
+                .put("showClock", showClock);
     }
 
     private static SharedPreferences prefs(Context c) {

@@ -58,6 +58,10 @@ public class PlayerService extends Service {
     static volatile String currentId;
     /** Text fuer die Statuszeile. */
     static volatile String currentStatus = "";
+    /** Name des laufenden Senders (oder null). */
+    static volatile String currentStation;
+    /** Songtitel vom Sender, meist "Interpret - Titel" (oder leer). */
+    static volatile String currentTitle = "";
 
     private static final String TAG = "EchoRadio";
     private static final String CHANNEL = "playback";
@@ -297,6 +301,7 @@ public class PlayerService extends Service {
     private void startPlayer(String url, int t) {
         playingUrl = url;
         lastTitle = null;
+        currentTitle = "";
         final String id = playingId;
         final String name = playingName;
         final boolean podcast = Tile.RSS.equals(playingMode);
@@ -448,6 +453,7 @@ public class PlayerService extends Service {
             return;
         }
         lastTitle = clean;
+        currentTitle = sameName(clean, playingName) ? "" : clean;
         // Manche Sender schicken zwischen den Songs nur ihren eigenen Namen
         showText(sameName(clean, playingName) ? "läuft" : clean);
     }
@@ -665,6 +671,10 @@ public class PlayerService extends Service {
         }
         currentId = id;
         currentStatus = text;
+        currentStation = id == null ? null : playingName;
+        if (id == null) {
+            currentTitle = "";
+        }
         Intent i = new Intent(ACTION_STATE);
         i.setPackage(getPackageName());
         sendBroadcast(i);
