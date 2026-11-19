@@ -27,6 +27,7 @@ final class TileStore {
     private static final String PREFS = "tiles";
     private static final String KEY = "tiles_json";
     private static final String KEY_REVISION = "revision";
+    private static final String KEY_VOICE_MIGRATED = "voice_migrated";
     /** Einstellungen von Version 1.0 (nur geaenderte Adressen). */
     private static final String OLD_PREFS = "streams";
 
@@ -37,7 +38,18 @@ final class TileStore {
         String json = prefs(context).getString(KEY, null);
         if (json != null) {
             try {
-                return parseArray(new JSONArray(json));
+                List<Tile> tiles = parseArray(new JSONArray(json));
+                // Einmalig: Standardknoepfe aus aelteren Versionen bekommen ihre Sprach-Namen
+                if (!prefs(context).getBoolean(KEY_VOICE_MIGRATED, false)) {
+                    for (Tile t : tiles) {
+                        if (t.voice.isEmpty()) {
+                            t.voice = defaultVoice(t.id);
+                        }
+                    }
+                    prefs(context).edit().putBoolean(KEY_VOICE_MIGRATED, true)
+                            .putString(KEY, toArray(tiles).toString()).apply();
+                }
+                return tiles;
             } catch (JSONException e) {
                 // kaputte Einstellungen: mit den Standardknoepfen weitermachen
             }
@@ -135,6 +147,25 @@ final class TileStore {
                 "org.schabi.newpipe|com.google.android.youtube|https://m.youtube.com", blue));
         tiles.add(new Tile("bundesliga", "Bundesliga\nKonferenz", Tile.STREAM,
                 "https://wdr-wdr2-rheinland.icecastssl.wdr.de/wdr/wdr2/rheinland/mp3/128/stream.mp3", blue));
+        for (Tile t : tiles) {
+            t.voice = defaultVoice(t.id);
+        }
         return tiles;
+    }
+
+    /** Weitere Sprach-Namen der Standardknoepfe. */
+    static String defaultVoice(String id) {
+        switch (id) {
+            case "news":
+                return "Nachrichten";
+            case "1live":
+                return "eins live";
+            case "dlf":
+                return "Deutschlandfunk, d l f";
+            case "bundesliga":
+                return "Fußball";
+            default:
+                return "";
+        }
     }
 }

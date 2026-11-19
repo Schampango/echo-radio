@@ -90,6 +90,7 @@ public class MainActivity extends Activity {
     private static final int MAX_PER_PAGE = 12;
     private static final int REQUEST_EXPORT = 1;
     private static final int REQUEST_IMPORT = 2;
+    private static final int REQUEST_MICROPHONE = 3;
 
     private List<Tile> tiles;
     /** Revision der Knoepfe, die gerade angezeigt werden. */
@@ -148,6 +149,21 @@ public class MainActivity extends Activity {
             startForegroundService(new Intent(this, WebService.class));
         } catch (RuntimeException e) {
             // ohne Weboberflaeche weitermachen
+        }
+        // Sprachsteuerung: braucht das Mikrofon
+        if (VoiceService.hasPermission(this)) {
+            VoiceService.startIfAllowed(this);
+        } else if (VoiceService.isEnabled(this)) {
+            requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO}, REQUEST_MICROPHONE);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_MICROPHONE && grantResults.length > 0
+                && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            VoiceService.startIfAllowed(this);
         }
     }
 

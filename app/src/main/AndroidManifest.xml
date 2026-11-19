@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- Android 11: noetig, um installierte Apps aufzulisten und zu starten -->
     <queries>
@@ -45,6 +46,12 @@
         <service
             android:name=".PlayerService"
             android:exported="false" />
+
+        <!-- Lokale Sprachsteuerung ("Alexa, ...") -->
+        <service
+            android:name=".VoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Weboberflaeche auf Port 8080 -->
         <service

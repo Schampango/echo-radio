@@ -25,6 +25,8 @@ final class Tile {
     int color;
     /** Adresse eines Logos (leer = nur Beschriftung). */
     String logo = "";
+    /** Weitere Namen fuer die Sprachsteuerung, mit Komma getrennt. */
+    String voice = "";
 
     Tile(String id, String label, String type, String value, int color) {
         this.id = id;
@@ -42,6 +44,18 @@ final class Tile {
         return label.replace('\n', ' ').trim();
     }
 
+    /** Beschriftung und alle weiteren Sprach-Namen. */
+    java.util.List<String> spokenNames() {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        names.add(label);
+        for (String v : voice.split(",")) {
+            if (!v.trim().isEmpty()) {
+                names.add(v.trim());
+            }
+        }
+        return names;
+    }
+
     JSONObject toJson() throws JSONException {
         JSONObject o = new JSONObject();
         o.put("id", id);
@@ -51,6 +65,9 @@ final class Tile {
         o.put("color", toHex(color));
         if (!logo.isEmpty()) {
             o.put("logo", logo);
+        }
+        if (!voice.isEmpty()) {
+            o.put("voice", voice);
         }
         return o;
     }
@@ -68,6 +85,7 @@ final class Tile {
         }
         Tile t = new Tile(id, o.optString("label"), o.optString("type", STREAM), o.optString("value"), color);
         t.logo = o.optString("logo").trim();
+        t.voice = o.optString("voice").trim();
         return t;
     }
 

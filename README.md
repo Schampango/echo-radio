@@ -28,6 +28,20 @@ Frei konfigurierbare Senderknöpfe für den Amazon Echo Show 8 (1. Gen, *crown*)
 Alle Knöpfe sind gleich groß und sitzen in einem Raster. Die Spaltenzahl wählt die App selbst,
 sodass die Knöpfe möglichst groß werden.
 
+## Sprachsteuerung
+
+Läuft komplett auf dem Echo (Vosk, kleines deutsches Modell), ohne Internet und ohne Home Assistant.
+Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
+
+- **„Alexa, …“** – nach „Alexa“ piept es kurz und die Musik wird leiser
+- „Alexa, spiel DLF“ / „Alexa, Eins Live“ / „Alexa, Nachrichten“ – Name eines Knopfs
+- „Alexa, Stopp“, „Alexa, lauter“, „Alexa, leiser“, „Alexa, Lautstärke 5“
+- Auch mit Pause: „Alexa“ … *piep* … „Deutschlandfunk“
+- Weitere Namen pro Knopf in der Weboberfläche unter **Sprachbefehl**
+- Ein/Aus: 🎤-Knopf oben in der Weboberfläche oder die Mikrofon-Taste am Echo
+- Mikrofon-Berechtigung fehlt? `adb shell pm grant de.polla.echoradio android.permission.RECORD_AUDIO`
+- Protokoll: `adb logcat -s EchoRadio:*` (zeigt „Gehört: …“)
+
 ## Weboberfläche
 
 Die App startet auf dem Echo einen kleinen Webserver: **http://&lt;IP des Echo&gt;:8080**

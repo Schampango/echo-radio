@@ -74,6 +74,8 @@ public class PlayerService extends Service {
     private static final int FADE_OUT_MS = 200;
     private static final int FADE_IN_MS = 300;
     private static final int FADE_STEPS = 10;
+    /** Lautstaerke der Musik, waehrend ein Sprachbefehl gesprochen wird. */
+    private static final float DUCK_VOLUME = 0.15f;
 
     /** Laufende Instanz, nur fuer progress(). Zugriff nur im Haupt-Thread. */
     private static PlayerService instance;
@@ -96,6 +98,8 @@ public class PlayerService extends Service {
     /** Aufgeloeste Adresse des aktuellen Versuchs. */
     private String playingUrl;
     private boolean prepared;
+    /** Musik gerade leiser wegen eines Sprachbefehls. */
+    private boolean ducked;
     /** Ob in dieser Sitzung schon einmal etwas zu hoeren war. */
     private boolean everPlayed;
     private String lastTitle;
@@ -191,6 +195,20 @@ public class PlayerService extends Service {
         }
         long duration = s.player.getDuration();
         return new long[]{s.player.getCurrentPosition(), duration == C.TIME_UNSET ? 0 : duration};
+    }
+
+    /**
+     * Musik leiser stellen, waehrend ein Sprachbefehl gesprochen wird. Nur im Haupt-Thread aufrufen.
+     */
+    static void duck(boolean on) {
+        PlayerService s = instance;
+        if (s == null) {
+            return;
+        }
+        s.ducked = on;
+        if (s.player != null) {
+            s.player.setVolume(on ? DUCK_VOLUME : 1f);
+        }
     }
 
     /** Startet die Wiedergabe eines Knopfs (Stream, Podcast oder Sendersuche). */
@@ -587,7 +605,7 @@ public class PlayerService extends Service {
             final float volume = i / (float) FADE_STEPS;
             main.postDelayed(() -> {
                 if (player == p) {
-                    p.setVolume(volume);
+                    p.setVolume(ducked ? Math.min(volume, DUCK_VOLUME) : volume);
                 }
             }, (long) i * FADE_IN_MS / FADE_STEPS);
         }

@@ -28,6 +28,8 @@
   .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
   .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
   .btn.small { padding: 6px 11px; font-size: 14px; }
+  #voiceBtn.on { border-color: #43a047; color: #2e7d32; }
+  #voiceBtn.off { color: var(--muted); }
   .banner { display: flex; gap: 12px; align-items: center; justify-content: center; background: #fff4e5;
     color: #7a4b00; padding: 10px 20px; border-bottom: 1px solid #ffd8a8; }
   .hidden { display: none !important; }
@@ -89,6 +91,7 @@
 <header class="top">
   <div class="brand">Echo Radio</div>
   <div class="now"><span class="dot" id="nowDot"></span><span id="nowText">Verbinde …</span></div>
+  <button class="btn small" id="voiceBtn" title="Sprachsteuerung">🎤 …</button>
   <div class="vol">🔊 <input type="range" id="volume" min="0" max="100" value="0"> <span id="volText">–</span></div>
   <button class="btn danger" id="stopBtn">Stopp</button>
 </header>
@@ -481,6 +484,14 @@ function renderEditor() {
   logoField.append(el("div", { class: "row" }, [query, searchBtn, clearBtn]), results);
   box.append(logoField);
 
+  // Sprachbefehl
+  const voice = el("input", { type: "text", placeholder: "z. B. Nachrichten, Deutschlandfunk" });
+  voice.value = t.voice || "";
+  voice.addEventListener("input", () => { t.voice = voice.value; scheduleSave(); });
+  box.append(field("Sprachbefehl – weitere Namen, mit Komma getrennt", voice,
+    el("div", { class: "note", text: "„Alexa, " + (displayName(t) || "…") + "“ geht immer. Hier weitere Namen eintragen, "
+      + "z. B. wenn die Beschriftung eine Abkürzung ist oder nicht erkannt wird." })));
+
   // Aktionen
   const idx = tiles.indexOf(t);
   const actions = el("div", { class: "actions" });
@@ -593,6 +604,7 @@ function normalize(list) {
       value: String(x.value || ""),
       color: /^#[0-9a-f]{6}$/i.test(x.color || "") ? x.color.toUpperCase() : "#00A0E3",
       logo: String(x.logo || ""),
+      voice: String(x.voice || ""),
     };
   });
 }
@@ -606,6 +618,15 @@ async function poll() {
     playingId = d.playing;
     $("nowText").textContent = d.status || "Bereit";
     $("nowDot").classList.toggle("on", !!d.playing);
+    if (d.voice) {
+      const vb = $("voiceBtn");
+      const st = d.voice.state || "";
+      vb.textContent = !d.voice.enabled ? "🎤 aus"
+        : (st.startsWith("hört") || st.startsWith("🎤")) ? "🎤 an" : "🎤 " + st;
+      vb.className = "btn small " + (d.voice.enabled ? "on" : "off");
+      vb.title = "Sprachsteuerung: " + d.voice.state + " – klicken zum " + (d.voice.enabled ? "Ausschalten" : "Einschalten");
+      vb.dataset.enabled = d.voice.enabled ? "1" : "0";
+    }
     if (!volDragging) {
       $("volume").value = d.volume;
       $("volText").textContent = d.volume + " %";
@@ -637,7 +658,7 @@ vol.addEventListener("change", async () => {
 });
 
 $("addBtn").addEventListener("click", () => {
-  const t = { id: newId(), label: "Neu", type: "stream", value: "", color: "#00A0E3", logo: "" };
+  const t = { id: newId(), label: "Neu", type: "stream", value: "", color: "#00A0E3", logo: "", voice: "" };
   tiles.push(t);
   selectedId = t.id;
   renderGrid();
@@ -677,6 +698,12 @@ $("importFile").addEventListener("change", async (ev) => {
 });
 
 $("reloadBtn").addEventListener("click", load);
+
+$("voiceBtn").addEventListener("click", async () => {
+  const on = $("voiceBtn").dataset.enabled !== "1";
+  try { await api("POST", "/api/voice?on=" + (on ? 1 : 0)); } catch (e) { setSave(e.message, true); }
+  setTimeout(poll, 300);
+});
 
 load().then(poll);
 setInterval(poll, 2000);

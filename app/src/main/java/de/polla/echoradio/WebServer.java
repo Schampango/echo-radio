@@ -38,6 +38,7 @@ import java.util.concurrent.Executors;
  * POST /api/play?id=   Knopf abspielen
  * POST /api/stop       Wiedergabe stoppen
  * POST /api/volume?level=0..100
+ * POST /api/voice?on=1|0  Sprachsteuerung ein/aus
  * GET  /api/apps       installierte Apps
  * GET  /api/logos?q=   Logo-Suche bei radio-browser.info
  * GET  /api/export     Sicherung als Datei
@@ -291,6 +292,12 @@ final class WebServer implements Runnable {
                     return json(200, new JSONObject().put("volume", volumePercent()));
                 }
                 break;
+            case "/api/voice":
+                if ("POST".equals(m)) {
+                    VoiceService.setEnabled(context, !"0".equals(req.query.get("on")));
+                    return json(200, status());
+                }
+                break;
             case "/api/apps":
                 if ("GET".equals(m)) {
                     return json(200, new JSONObject().put("apps", apps()));
@@ -354,6 +361,9 @@ final class WebServer implements Runnable {
         o.put("status", PlayerService.currentStatus == null ? "" : PlayerService.currentStatus);
         o.put("volume", volumePercent());
         o.put("revision", TileStore.revision(context));
+        o.put("voice", new JSONObject()
+                .put("enabled", VoiceService.isEnabled(context))
+                .put("state", VoiceService.state));
         return o;
     }
 
