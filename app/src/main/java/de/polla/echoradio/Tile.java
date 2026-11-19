@@ -23,6 +23,8 @@ final class Tile {
     /** Adresse, Feed, Sendername oder Paketname. Bei Apps mehrere Ziele mit | getrennt. */
     String value;
     int color;
+    /** Adresse eines Logos (leer = nur Beschriftung). */
+    String logo = "";
 
     Tile(String id, String label, String type, String value, int color) {
         this.id = id;
@@ -47,6 +49,9 @@ final class Tile {
         o.put("type", type);
         o.put("value", value);
         o.put("color", toHex(color));
+        if (!logo.isEmpty()) {
+            o.put("logo", logo);
+        }
         return o;
     }
 
@@ -61,7 +66,9 @@ final class Tile {
         if (id.isEmpty()) {
             id = UUID.randomUUID().toString();
         }
-        return new Tile(id, o.optString("label"), o.optString("type", STREAM), o.optString("value"), color);
+        Tile t = new Tile(id, o.optString("label"), o.optString("type", STREAM), o.optString("value"), color);
+        t.logo = o.optString("logo").trim();
+        return t;
     }
 
     static String toHex(int color) {

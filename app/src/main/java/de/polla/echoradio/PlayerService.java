@@ -10,23 +10,17 @@ import android.content.SharedPreferences;
 import android.graphics.drawable.Icon;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -35,8 +29,9 @@ import java.util.regex.Pattern;
 
 /**
  * Spielt Streams und Podcasts im Hintergrund ab, auch wenn der Bildschirm ausgeht.
- * Bei Podcasts wird die Position gemerkt und beim naechsten Mal fortgesetzt,
- * solange im Feed keine neuere Folge erschienen ist.
+ * - Bricht die Verbindung ab, wird automatisch neu verbunden.
+ * - Bei Radiostreams wird der laufende Titel angezeigt (falls der Sender ihn mitschickt).
+ * - Bei Podcasts wird die Position gemerkt und fortgesetzt, solange keine neuere Folge erschienen ist.
  */
 public class PlayerService extends Service {
 
@@ -61,6 +56,11 @@ public class PlayerService extends Service {
     private static final int AUTOSAVE_MS = 5000;
     /** Liegt die gemerkte Stelle so knapp vor dem Ende, beginnt die Folge von vorne. */
     private static final int END_MARGIN_MS = 5000;
+    /** So lange darf der Stream puffern, bevor neu verbunden wird. */
+    private static final int STALL_MS = 20000;
+    /** Wartezeiten zwischen den Neuversuchen in Sekunden; danach immer der letzte Wert. */
+    private static final int[] RETRY_DELAYS_S = {3, 5, 10, 20, 30};
+    private static final int MAX_RETRIES = 20;
 
     /** Laufende Instanz, nur fuer progress(). Zugriff nur im Haupt-Thread. */
     private static PlayerService instance;
@@ -70,13 +70,27 @@ public class PlayerService extends Service {
     private MediaPlayer player;
     private WifiManager.WifiLock wifiLock;
     private SharedPreferences positions;
-    /** Wird bei jedem Start/Stopp erhoeht, damit alte Antworten ignoriert werden. */
-    private int generation;
+    private ConnectivityManager connectivity;
+    private ConnectivityManager.NetworkCallback networkCallback;
+    private IcyReader icy;
 
+    /** Wird bei jedem Verbindungsversuch und jedem Stopp erhoeht; alte Rueckmeldungen werden ignoriert. */
+    private int token;
+
+    // Was gerade gespielt werden soll (null = nichts)
     private String playingId;
+    private String playingName;
     private String playingMode;
+    private String playingValue;
+    /** Aufgeloeste Adresse des aktuellen Versuchs. */
     private String playingUrl;
     private boolean prepared;
+    /** Ob in dieser Sitzung schon einmal etwas zu hoeren war. */
+    private boolean everPlayed;
+    private int retryCount;
+    private boolean waitingForRetry;
+    private Runnable retryTask;
+    private Runnable stallTask;
 
     private final Runnable autosave = new Runnable() {
         @Override
@@ -105,6 +119,19 @@ public class PlayerService extends Service {
             wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "echoradio");
             wifiLock.setReferenceCounted(false);
         }
+        // Kommt das Netz zurueck, nicht erst die Wartezeit abwarten
+        connectivity = getSystemService(ConnectivityManager.class);
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network network) {
+                main.post(PlayerService.this::onNetworkAvailable);
+            }
+        };
+        try {
+            connectivity.registerDefaultNetworkCallback(networkCallback);
+        } catch (RuntimeException e) {
+            networkCallback = null;
+        }
     }
 
     @Override
@@ -126,11 +153,19 @@ public class PlayerService extends Service {
     @Override
     public void onDestroy() {
         savePosition();
-        main.removeCallbacks(autosave);
-        generation++;
+        cancelTimers();
+        stopIcy();
+        token++;
         prepared = false;
         releasePlayer();
         releaseWifiLock();
+        if (networkCallback != null) {
+            try {
+                connectivity.unregisterNetworkCallback(networkCallback);
+            } catch (RuntimeException ignored) {
+                // war nicht registriert
+            }
+        }
         worker.shutdownNow();
         instance = null;
         super.onDestroy();
@@ -162,47 +197,66 @@ public class PlayerService extends Service {
                 : String.format(Locale.GERMANY, "%d:%02d", m, s);
     }
 
-    // ---------------------------------------------------------------- Wiedergabe
+    // ---------------------------------------------------------------- Ablauf
 
     private void play(String id, String name, String mode, String value) {
         savePosition();
-        main.removeCallbacks(autosave);
+        cancelTimers();
+        stopIcy();
         prepared = false;
         releasePlayer();
 
-        final int gen = ++generation;
         playingId = id;
+        playingName = name;
         playingMode = mode;
+        playingValue = value;
         playingUrl = null;
+        everPlayed = false;
+        retryCount = 0;
 
         startForeground(NOTIFICATION_ID, buildNotification(name, "Verbinde …"));
         if (wifiLock != null) {
             wifiLock.acquire();
         }
         setState(id, name + " – verbinde …");
+        attempt();
+    }
 
+    /** Ein Verbindungsversuch: Adresse aufloesen, dann abspielen. */
+    private void attempt() {
+        final int t = ++token;
+        waitingForRetry = false;
+        final String mode = playingMode;
+        final String value = playingValue;
         worker.execute(() -> {
             try {
                 String url = resolve(mode, value);
                 main.post(() -> {
-                    if (gen == generation) {
-                        startPlayer(id, name, url, gen);
+                    if (t == token) {
+                        startPlayer(url, t);
                     }
                 });
             } catch (Exception e) {
                 main.post(() -> {
-                    if (gen == generation) {
-                        stopAll("Fehler bei " + name + ": " + e.getMessage());
+                    if (t != token) {
+                        return;
+                    }
+                    if (isPermanent(e)) {
+                        stopAll("Fehler bei " + playingName + ": " + describe(e));
+                    } else {
+                        connectionLost(describe(e), t);
                     }
                 });
             }
         });
     }
 
-    private void startPlayer(String id, String name, String url, int gen) {
+    private void startPlayer(String url, int t) {
         playingUrl = url;
-        boolean podcast = Tile.RSS.equals(playingMode);
-        int resumeAt = podcast ? savedPosition(id, url) : 0;
+        final String id = playingId;
+        final String name = playingName;
+        final boolean podcast = Tile.RSS.equals(playingMode);
+        final int resumeAt = podcast ? savedPosition(id, url) : 0;
 
         MediaPlayer mp = new MediaPlayer();
         player = mp;
@@ -211,46 +265,120 @@ public class PlayerService extends Service {
                 .setContentType(podcast ? AudioAttributes.CONTENT_TYPE_SPEECH : AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build());
         mp.setWakeMode(getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);
+
         mp.setOnPreparedListener(p -> {
-            if (gen != generation) {
+            if (t != token) {
                 return;
             }
             prepared = true;
+            boolean reconnected = retryCount > 0;
+            everPlayed = true;
+            retryCount = 0;
             int duration = p.getDuration();
             boolean resume = resumeAt > 0 && (duration <= 0 || resumeAt < duration - END_MARGIN_MS);
             if (resume) {
                 p.seekTo(resumeAt);
             }
             p.start();
-            String text = resume ? "fortgesetzt bei " + formatTime(resumeAt) : "läuft";
-            setState(id, name + " – " + text);
-            getSystemService(NotificationManager.class)
-                    .notify(NOTIFICATION_ID, buildNotification(name, text));
+            String text;
+            if (resume) {
+                text = (reconnected ? "wieder verbunden, " : "fortgesetzt bei ") + formatTime(resumeAt);
+            } else {
+                text = reconnected ? "wieder verbunden" : "läuft";
+            }
+            showText(text);
             if (podcast) {
                 main.postDelayed(autosave, AUTOSAVE_MS);
+            } else {
+                startIcy(url, t);
             }
         });
         mp.setOnErrorListener((p, what, extra) -> {
-            if (gen == generation) {
-                stopAll(name + ": Wiedergabe fehlgeschlagen (" + what + "/" + extra + ")");
+            if (t != token) {
+                return true;
+            }
+            boolean unplayable = extra == MediaPlayer.MEDIA_ERROR_UNSUPPORTED
+                    || extra == MediaPlayer.MEDIA_ERROR_MALFORMED;
+            if (unplayable && !everPlayed) {
+                stopAll(name + ": Format wird nicht unterstützt");
+            } else {
+                connectionLost("Verbindung unterbrochen", t);
             }
             return true;
         });
         mp.setOnCompletionListener(p -> {
-            if (gen == generation) {
-                if (podcast) {
-                    // Folge zu Ende gehoert: naechstes Mal von vorne
-                    clearPosition(id);
-                    prepared = false;
-                }
-                stopAll(name + " beendet");
+            if (t != token) {
+                return;
             }
+            if (podcast) {
+                // Folge zu Ende gehoert: naechstes Mal von vorne
+                clearPosition(id);
+                prepared = false;
+                stopAll(name + " beendet");
+            } else {
+                // Ein Radiostream endet nie von selbst
+                connectionLost("Stream abgebrochen", t);
+            }
+        });
+        mp.setOnInfoListener((p, what, extra) -> {
+            if (t != token) {
+                return false;
+            }
+            if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) {
+                removeStallCheck();
+                stallTask = () -> {
+                    if (t == token) {
+                        connectionLost("Stream hängt", t);
+                    }
+                };
+                main.postDelayed(stallTask, STALL_MS);
+            } else if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) {
+                removeStallCheck();
+            }
+            return false;
         });
         try {
             mp.setDataSource(url);
             mp.prepareAsync();
         } catch (IOException | IllegalArgumentException | IllegalStateException | SecurityException e) {
-            stopAll("Fehler bei " + name + ": " + e.getMessage());
+            connectionLost(describe(e), t);
+        }
+    }
+
+    /** Verbindung verloren: aufraeumen und nach einer Pause neu versuchen. */
+    private void connectionLost(String reason, int t) {
+        if (t != token || playingId == null) {
+            return;
+        }
+        savePosition();
+        main.removeCallbacks(autosave);
+        removeStallCheck();
+        stopIcy();
+        prepared = false;
+        releasePlayer();
+        token++; // Rueckmeldungen dieses Versuchs ignorieren
+
+        retryCount++;
+        if (retryCount > MAX_RETRIES) {
+            stopAll(playingName + ": " + reason + " – aufgegeben");
+            return;
+        }
+        int delay = RETRY_DELAYS_S[Math.min(retryCount - 1, RETRY_DELAYS_S.length - 1)];
+        waitingForRetry = true;
+        showText(reason + " – neuer Versuch in " + delay + " s");
+        final int expected = token;
+        retryTask = () -> {
+            if (expected == token && waitingForRetry) {
+                attempt();
+            }
+        };
+        main.postDelayed(retryTask, delay * 1000L);
+    }
+
+    private void onNetworkAvailable() {
+        if (waitingForRetry && retryTask != null) {
+            main.removeCallbacks(retryTask);
+            main.postDelayed(retryTask, 1500);
         }
     }
 
@@ -263,30 +391,51 @@ public class PlayerService extends Service {
         if (player == null || !prepared) {
             return;
         }
+        int pos = Math.max(0, positionMs);
         try {
-            player.seekTo(Math.max(0, positionMs));
+            player.seekTo(pos);
         } catch (IllegalStateException e) {
             return;
         }
         if (Tile.RSS.equals(playingMode) && playingUrl != null) {
-            positions.edit().putString(playingId, Math.max(0, positionMs) + "|" + playingUrl).apply();
+            positions.edit().putString(playingId, pos + "|" + playingUrl).apply();
         }
     }
 
     @SuppressWarnings("deprecation")
     private void stopAll(String message) {
         savePosition();
-        main.removeCallbacks(autosave);
-        generation++;
+        cancelTimers();
+        stopIcy();
+        token++;
+        waitingForRetry = false;
         prepared = false;
         releasePlayer();
         releaseWifiLock();
         playingId = null;
+        playingName = null;
         playingMode = null;
+        playingValue = null;
         playingUrl = null;
         setState(null, message == null ? "" : message);
         stopForeground(true);
         stopSelf();
+    }
+
+    private void cancelTimers() {
+        main.removeCallbacks(autosave);
+        removeStallCheck();
+        if (retryTask != null) {
+            main.removeCallbacks(retryTask);
+            retryTask = null;
+        }
+    }
+
+    private void removeStallCheck() {
+        if (stallTask != null) {
+            main.removeCallbacks(stallTask);
+            stallTask = null;
+        }
     }
 
     private void releasePlayer() {
@@ -304,6 +453,25 @@ public class PlayerService extends Service {
     private void releaseWifiLock() {
         if (wifiLock != null && wifiLock.isHeld()) {
             wifiLock.release();
+        }
+    }
+
+    // ---------------------------------------------------------------- Titel (ICY)
+
+    private void startIcy(String url, int t) {
+        stopIcy();
+        icy = new IcyReader(url, title -> main.post(() -> {
+            if (t == token && playingId != null) {
+                showText(title);
+            }
+        }));
+        icy.start();
+    }
+
+    private void stopIcy() {
+        if (icy != null) {
+            icy.stop();
+            icy = null;
         }
     }
 
@@ -347,6 +515,16 @@ public class PlayerService extends Service {
 
     // ---------------------------------------------------------------- Status & Benachrichtigung
 
+    /** Zeigt "Name – Text" in der Statuszeile und in der Benachrichtigung. */
+    private void showText(String text) {
+        if (playingId == null) {
+            return;
+        }
+        setState(playingId, playingName + " – " + text);
+        getSystemService(NotificationManager.class)
+                .notify(NOTIFICATION_ID, buildNotification(playingName, text));
+    }
+
     private void setState(String id, String text) {
         currentId = id;
         currentStatus = text;
@@ -375,92 +553,44 @@ public class PlayerService extends Service {
     // ---------------------------------------------------------------- Adressen aufloesen
 
     /** Laeuft im Hintergrund-Thread. Liefert die abspielbare Adresse. */
-    private String resolve(String mode, String value) throws IOException {
+    private static String resolve(String mode, String value) throws IOException {
         if (value == null || value.isEmpty()) {
-            throw new IOException("keine Adresse eingetragen");
+            throw new Http.NotFoundException("keine Adresse eingetragen");
         }
         if (Tile.RSS.equals(mode)) {
-            String xml = httpGet(value);
+            String xml = Http.getString(value);
             Matcher m = Pattern.compile("<enclosure[^>]*?url=\"([^\"]+)\"").matcher(xml);
             if (!m.find()) {
-                throw new IOException("keine Folge im Feed gefunden");
+                throw new Http.NotFoundException("keine Folge im Feed gefunden");
             }
             return m.group(1).replace("&amp;", "&");
         }
         if (Tile.SEARCH.equals(mode) && !value.startsWith("http")) {
-            return searchRadioBrowser(value);
+            return RadioBrowser.findStreamUrl(value);
         }
         return value;
     }
 
-    /** Sucht den Sender im freien Verzeichnis radio-browser.info. */
-    private String searchRadioBrowser(String name) throws IOException {
-        String q = URLEncoder.encode(name, "UTF-8").replace("+", "%20");
-        String json = httpGet("https://all.api.radio-browser.info/json/stations/byname/" + q
-                + "?hidebroken=true&order=clickcount&reverse=true&limit=10");
-        try {
-            JSONArray arr = new JSONArray(json);
-            JSONObject best = null;
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject o = arr.getJSONObject(i);
-                if (best == null) {
-                    best = o;
-                }
-                if (name.equalsIgnoreCase(o.optString("name").trim())) {
-                    best = o;
-                    break;
-                }
-            }
-            if (best == null) {
-                throw new IOException("Sender nicht gefunden");
-            }
-            String url = best.optString("url_resolved");
-            if (url.isEmpty()) {
-                url = best.optString("url");
-            }
-            if (url.isEmpty()) {
-                throw new IOException("Sender ohne Stream-Adresse");
-            }
-            return url;
-        } catch (JSONException e) {
-            throw new IOException("Antwort von radio-browser.info unlesbar");
+    /** Fehler, bei denen ein Neuversuch nichts bringt. */
+    private static boolean isPermanent(Exception e) {
+        if (e instanceof Http.NotFoundException) {
+            return true;
         }
+        if (e instanceof Http.StatusException) {
+            int code = ((Http.StatusException) e).code;
+            return code >= 400 && code < 500 && code != 408 && code != 429;
+        }
+        return false;
     }
 
-    private static String httpGet(String address) throws IOException {
-        String current = address;
-        for (int hop = 0; hop < 5; hop++) {
-            HttpURLConnection c = (HttpURLConnection) new URL(current).openConnection();
-            c.setConnectTimeout(10000);
-            c.setReadTimeout(15000);
-            c.setInstanceFollowRedirects(false);
-            c.setRequestProperty("User-Agent", "EchoRadio/1.0 (Android)");
-            try {
-                int code = c.getResponseCode();
-                if (code >= 300 && code < 400) {
-                    String location = c.getHeaderField("Location");
-                    if (location == null) {
-                        throw new IOException("Weiterleitung ohne Ziel");
-                    }
-                    current = new URL(new URL(current), location).toString();
-                    continue;
-                }
-                if (code != 200) {
-                    throw new IOException("HTTP " + code);
-                }
-                try (InputStream in = c.getInputStream()) {
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) > 0) {
-                        out.write(buf, 0, n);
-                    }
-                    return new String(out.toByteArray(), StandardCharsets.UTF_8);
-                }
-            } finally {
-                c.disconnect();
-            }
+    private static String describe(Exception e) {
+        if (e instanceof UnknownHostException) {
+            return "kein Netz";
         }
-        throw new IOException("zu viele Weiterleitungen");
+        if (e instanceof SocketTimeoutException) {
+            return "Zeitüberschreitung";
+        }
+        String m = e.getMessage();
+        return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m;
     }
 }

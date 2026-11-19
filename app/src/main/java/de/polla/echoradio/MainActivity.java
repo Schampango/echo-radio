@@ -30,6 +30,7 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -38,24 +39,37 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONException;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * Startbildschirm mit frei konfigurierbaren runden Knoepfen.
  * Normalbetrieb: Tippen spielt ab bzw. startet die App, nochmal tippen stoppt.
- * Bearbeiten-Modus: Tippen oeffnet den Editor, "+" fuegt einen Knopf hinzu.
- * Langer Druck oeffnet den Editor jederzeit.
+ * Bearbeiten-Modus: Tippen oeffnet den Editor, "+" fuegt einen Knopf hinzu,
+ * dazu Sichern/Laden der Knoepfe als Datei.
+ * Langer Druck oeffnet den Editor jederzeit. Mehr Knoepfe als auf eine Seite
+ * passen werden auf Seiten verteilt, zwischen denen man wischt.
  */
 public class MainActivity extends Activity {
 
     private static final int[] PALETTE = {
             0xFF00A0E3, 0xFF1565C0, 0xFF00897B, 0xFF43A047, 0xFF7CB342, 0xFFFDD835,
             0xFFFB8C00, 0xFFE53935, 0xFFD81B60, 0xFF8E24AA, 0xFF6D4C41, 0xFF546E7A,
+            0xFFFFFFFF, 0xFF212121,
     };
 
     private static final String[] TYPES = {Tile.STREAM, Tile.RSS, Tile.SEARCH, Tile.APP};
@@ -72,13 +86,26 @@ public class MainActivity extends Activity {
             "Paketname oder https://… – oder „App auswählen“",
     };
 
+    /** Hoechstens so viele Knoepfe pro Seite. */
+    private static final int MAX_PER_PAGE = 12;
+    private static final int REQUEST_EXPORT = 1;
+    private static final int REQUEST_IMPORT = 2;
+
     private List<Tile> tiles;
     private boolean editMode;
+    private int page;
+    private int pageCount = 1;
+    /** Knoepfe pro Seite beim letzten Aufbau. */
+    private int pageCapacity = MAX_PER_PAGE;
 
-    private FrameLayout gridHolder;
+    private SwipeFrame gridHolder;
     private TextView status;
     private TextView editButton;
-    private final Map<String, TextView> tileViews = new HashMap<>();
+    private TextView stopButton;
+    private TextView backupButton;
+    private TextView restoreButton;
+    private final Map<String, View> tileViews = new HashMap<>();
+    private final ExecutorService background = Executors.newSingleThreadExecutor();
 
     // Fortschrittsbalken fuer Podcasts
     private LinearLayout progressRow;
@@ -127,6 +154,12 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onDestroy() {
+        background.shutdownNow();
+        super.onDestroy();
+    }
+
+    @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
@@ -152,7 +185,14 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.WHITE);
         root.setPadding(pad, pad, pad, pad);
 
-        gridHolder = new FrameLayout(this);
+        gridHolder = new SwipeFrame(this);
+        gridHolder.setOnSwipeListener(direction -> {
+            int next = page + direction;
+            if (next >= 0 && next < pageCount) {
+                page = next;
+                rebuildGrid();
+            }
+        });
         gridHolder.addOnLayoutChangeListener((v, left, top, right, bottom,
                                               oldLeft, oldTop, oldRight, oldBottom) -> {
             if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
@@ -175,6 +215,7 @@ public class MainActivity extends Activity {
         status.setTextColor(0xFF444444);
         status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
         status.setSingleLine(true);
+        status.setEllipsize(android.text.TextUtils.TruncateAt.END);
         info.addView(status);
 
         progressRow = new LinearLayout(this);
@@ -212,19 +253,48 @@ public class MainActivity extends Activity {
 
         bar.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
+        backupButton = pillButton("Sichern", 0xFF00897B);
+        backupButton.setOnClickListener(x -> exportTiles());
+        bar.addView(backupButton, barButtonParams());
+
+        restoreButton = pillButton("Laden", 0xFF00897B);
+        restoreButton.setOnClickListener(x -> importTiles());
+        bar.addView(restoreButton, barButtonParams());
+
         editButton = pillButton("Bearbeiten", 0xFF757575);
         editButton.setOnClickListener(x -> toggleEditMode());
-        LinearLayout.LayoutParams editLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56));
-        editLp.setMarginEnd(dp(16));
-        bar.addView(editButton, editLp);
+        bar.addView(editButton, barButtonParams());
 
-        TextView stop = pillButton("Stopp", 0xFFE53935);
-        stop.setOnClickListener(x -> stopPlayback());
-        bar.addView(stop, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56)));
+        stopButton = pillButton("Stopp", 0xFFE53935);
+        stopButton.setOnClickListener(x -> stopPlayback());
+        bar.addView(stopButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56)));
 
         // Feste Hoehe, damit die Knoepfe nicht springen, wenn der Balken erscheint
         root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(96)));
         setContentView(root);
+        updateBarButtons();
+    }
+
+    private LinearLayout.LayoutParams barButtonParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56));
+        lp.setMarginEnd(dp(16));
+        return lp;
+    }
+
+    private void updateBarButtons() {
+        editButton.setText(editMode ? "Fertig" : "Bearbeiten");
+        backupButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
+        restoreButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
+        stopButton.setVisibility(editMode ? View.GONE : View.VISIBLE);
+    }
+
+    private void toggleEditMode() {
+        editMode = !editMode;
+        updateBarButtons();
+        rebuildGrid();
+        if (editMode) {
+            Toast.makeText(this, "Knopf antippen zum Bearbeiten, + für einen neuen", Toast.LENGTH_LONG).show();
+        }
     }
 
     private TextView timeLabel() {
@@ -235,41 +305,12 @@ public class MainActivity extends Activity {
         return t;
     }
 
-    /** Zeigt den Fortschrittsbalken, solange ein Podcast laeuft. */
-    private void updateProgress() {
-        long[] p = PlayerService.progress();
-        if (p == null || p[1] <= 0) {
-            progressRow.setVisibility(View.GONE);
-            return;
-        }
-        progressRow.setVisibility(View.VISIBLE);
-        durationLabel.setText(PlayerService.formatTime(p[1]));
-        if (!dragging) {
-            seekBar.setMax((int) p[1]);
-            seekBar.setProgress((int) p[0]);
-            positionLabel.setText(PlayerService.formatTime(p[0]));
-        }
-    }
+    // ---------------------------------------------------------------- Raster und Seiten
 
-    private void seekTo(int positionMs) {
-        Intent i = new Intent(this, PlayerService.class);
-        i.setAction(PlayerService.ACTION_SEEK);
-        i.putExtra(PlayerService.EXTRA_POSITION, positionMs);
-        startService(i);
-    }
-
-    private void toggleEditMode() {
-        editMode = !editMode;
-        editButton.setText(editMode ? "Fertig" : "Bearbeiten");
-        rebuildGrid();
-        if (editMode) {
-            Toast.makeText(this, "Knopf antippen zum Bearbeiten, + für einen neuen", Toast.LENGTH_LONG).show();
-        }
-    }
-
-    // ---------------------------------------------------------------- Raster
-
-    /** Baut das Raster neu: alle Knoepfe gleich gross, in Zeilen und Spalten ausgerichtet. */
+    /**
+     * Baut die aktuelle Seite neu: alle Knoepfe gleich gross, in Zeilen und Spalten
+     * ausgerichtet. Passen nicht alle auf eine Seite, gibt es mehrere zum Wischen.
+     */
     private void rebuildGrid() {
         int w = gridHolder.getWidth();
         int h = gridHolder.getHeight();
@@ -279,8 +320,10 @@ public class MainActivity extends Activity {
         gridHolder.removeAllViews();
         tileViews.clear();
 
-        int count = tiles.size() + (editMode ? 1 : 0);
-        if (count == 0) {
+        int total = tiles.size() + (editMode ? 1 : 0);
+        if (total == 0) {
+            pageCount = 1;
+            page = 0;
             TextView empty = new TextView(this);
             empty.setText("Keine Knöpfe – tippe unten auf „Bearbeiten“");
             empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
@@ -291,47 +334,107 @@ public class MainActivity extends Activity {
             return;
         }
 
-        // Spaltenzahl waehlen, bei der die Knoepfe am groessten werden
         int margin = dp(12);
-        int cols = 1;
-        int size = 0;
-        for (int c = 1; c <= count; c++) {
-            int r = (count + c - 1) / c;
-            int s = Math.min(w / c, h / r) - 2 * margin;
-            if (s > size) {
-                size = s;
-                cols = c;
-            }
+        int dotsHeight = dp(32);
+        int perPage = Math.min(total, MAX_PER_PAGE);
+        int[] fit = fit(perPage, w, h, margin);
+        boolean paged = total > fit[0] * fit[1];
+        if (paged) {
+            fit = fit(perPage, w, h - dotsHeight, margin);
         }
-        size = Math.min(size, dp(260));
+        int cols = fit[0];
+        int size = fit[2];
+        pageCapacity = fit[0] * fit[1];
+        pageCount = (total + pageCapacity - 1) / pageCapacity;
+        paged = pageCount > 1;
+        page = Math.max(0, Math.min(page, pageCount - 1));
         float textPx = size * textFactor();
 
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(cols);
-        for (Tile t : tiles) {
-            TextView v = makeTile(t.label, t.color, size, textPx);
-            v.setOnClickListener(x -> {
-                if (editMode) {
+        int from = page * pageCapacity;
+        int to = Math.min(total, from + pageCapacity);
+        for (int i = from; i < to; i++) {
+            if (i < tiles.size()) {
+                Tile t = tiles.get(i);
+                View v = makeTile(t, size, textPx);
+                v.setOnClickListener(x -> {
+                    if (editMode) {
+                        openEditor(t, false);
+                    } else {
+                        onTile(t);
+                    }
+                });
+                v.setOnLongClickListener(x -> {
                     openEditor(t, false);
-                } else {
-                    onTile(t);
+                    return true;
+                });
+                grid.addView(v, cellParams(size, margin));
+                tileViews.put(t.id, v);
+            } else {
+                FrameLayout add = makeCircle("+", 0xFFBDBDBD, size, size * 0.45f);
+                add.setOnClickListener(x -> openEditor(Tile.create(), true));
+                grid.addView(add, cellParams(size, margin));
+            }
+        }
+        if (paged) {
+            // Leere Plaetze auffuellen, damit jede Seite gleich ausgerichtet ist
+            for (int i = to; i < from + pageCapacity; i++) {
+                grid.addView(new View(this), cellParams(size, margin));
+            }
+        }
+        FrameLayout.LayoutParams gridLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        if (paged) {
+            gridLp.bottomMargin = dotsHeight;
+        }
+        gridHolder.addView(grid, gridLp);
+
+        if (paged) {
+            StringBuilder dots = new StringBuilder();
+            for (int p = 0; p < pageCount; p++) {
+                if (p > 0) {
+                    dots.append("   ");
                 }
-            });
-            v.setOnLongClickListener(x -> {
-                openEditor(t, false);
-                return true;
-            });
-            grid.addView(v, cellParams(size, margin));
-            tileViews.put(t.id, v);
+                dots.append(p == page ? "●" : "○");
+            }
+            TextView indicator = new TextView(this);
+            indicator.setText(dots);
+            indicator.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+            indicator.setTextColor(0xFF9E9E9E);
+            indicator.setGravity(Gravity.CENTER);
+            gridHolder.addView(indicator, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dotsHeight, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
         }
-        if (editMode) {
-            TextView add = makeTile("+", 0xFFBDBDBD, size, size * 0.45f);
-            add.setOnClickListener(x -> openEditor(Tile.create(), true));
-            grid.addView(add, cellParams(size, margin));
-        }
-        gridHolder.addView(grid, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         refresh();
+    }
+
+    /** Spaltenzahl, bei der n Knoepfe am groessten werden: {Spalten, Zeilen, Groesse}. */
+    private int[] fit(int n, int w, int h, int margin) {
+        int bestCols = 1;
+        int bestSize = 0;
+        for (int c = 1; c <= n; c++) {
+            int r = (n + c - 1) / c;
+            int s = Math.min(w / c, h / r) - 2 * margin;
+            if (s > bestSize) {
+                bestSize = s;
+                bestCols = c;
+            }
+        }
+        int rows = (n + bestCols - 1) / bestCols;
+        return new int[]{bestCols, rows, Math.max(dp(60), Math.min(bestSize, dp(260)))};
+    }
+
+    /** Baut neu auf und blaettert zu der Seite, auf der der Knopf mit diesem Index liegt. */
+    private void showIndex(int index) {
+        rebuildGrid();
+        if (pageCapacity > 0) {
+            int target = index / pageCapacity;
+            if (target != page) {
+                page = target;
+                rebuildGrid();
+            }
+        }
     }
 
     private static GridLayout.LayoutParams cellParams(int size, int margin) {
@@ -354,21 +457,49 @@ public class MainActivity extends Activity {
         return Math.max(0.08f, Math.min(0.22f, f));
     }
 
-    private TextView makeTile(String label, int color, int size, float textPx) {
-        TextView v = new TextView(this);
-        v.setText(label);
-        v.setGravity(Gravity.CENTER);
-        v.setTextColor(textColorFor(color));
-        v.setTypeface(Typeface.DEFAULT_BOLD);
-        v.setTextSize(TypedValue.COMPLEX_UNIT_PX, textPx);
-        v.setIncludeFontPadding(false);
-        v.setMaxLines(2);
-        v.setPadding(size / 10, 0, size / 10, 0);
-        v.setBackground(tileBackground(color, false));
-        v.setForeground(ripple());
-        v.setClickable(true);
-        v.setFocusable(true);
-        return v;
+    /** Kreis mit Beschriftung; mit Logo, sobald es geladen ist. */
+    private View makeTile(Tile t, int size, float textPx) {
+        FrameLayout frame = makeCircle(t.label, t.color, size, textPx);
+        if (!t.logo.isEmpty()) {
+            TextView label = (TextView) frame.getChildAt(0);
+            ImageView logo = new ImageView(this);
+            logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            int p = Math.round(size * 0.16f);
+            logo.setPadding(p, p, p, p);
+            logo.setVisibility(View.GONE);
+            frame.addView(logo, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            LogoCache.load(this, t.logo, size, bitmap -> {
+                if (bitmap != null) {
+                    logo.setImageBitmap(bitmap);
+                    logo.setVisibility(View.VISIBLE);
+                    label.setVisibility(View.GONE);
+                }
+            });
+        }
+        return frame;
+    }
+
+    private FrameLayout makeCircle(String text, int color, int size, float textPx) {
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackground(tileBackground(color, false));
+        frame.setClipToOutline(true);
+        frame.setForeground(ripple());
+        frame.setClickable(true);
+        frame.setFocusable(true);
+
+        TextView label = new TextView(this);
+        label.setText(text);
+        label.setGravity(Gravity.CENTER);
+        label.setTextColor(textColorFor(color));
+        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_PX, textPx);
+        label.setIncludeFontPadding(false);
+        label.setMaxLines(2);
+        label.setPadding(size / 10, 0, size / 10, 0);
+        frame.addView(label, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return frame;
     }
 
     private GradientDrawable tileBackground(int color, boolean active) {
@@ -379,6 +510,9 @@ public class MainActivity extends Activity {
             d.setStroke(dp(8), 0xFFFFC107);
         } else if (editMode) {
             d.setStroke(dp(3), 0xFF9E9E9E, dp(10), dp(6));
+        } else if (textColorFor(color) != Color.WHITE) {
+            // helle Kreise auf weissem Grund: duenner Rand
+            d.setStroke(dp(2), 0xFFE0E0E0);
         }
         return d;
     }
@@ -386,13 +520,44 @@ public class MainActivity extends Activity {
     private void refresh() {
         String current = PlayerService.currentId;
         for (Tile t : tiles) {
-            TextView v = tileViews.get(t.id);
+            View v = tileViews.get(t.id);
             if (v != null) {
                 v.setBackground(tileBackground(t.color, t.id.equals(current)));
             }
         }
         String s = PlayerService.currentStatus;
-        status.setText(s == null || s.isEmpty() ? (editMode ? "Bearbeiten" : "Bereit") : s);
+        if (s == null || s.isEmpty()) {
+            s = editMode ? "Bearbeiten" : "Bereit";
+        }
+        if (pageCount > 1 && !editMode && PlayerService.currentId == null) {
+            s = s + " · Seite " + (page + 1) + "/" + pageCount;
+        }
+        status.setText(s);
+    }
+
+    // ---------------------------------------------------------------- Podcast-Fortschritt
+
+    /** Zeigt den Fortschrittsbalken, solange ein Podcast laeuft. */
+    private void updateProgress() {
+        long[] p = PlayerService.progress();
+        if (p == null || p[1] <= 0) {
+            progressRow.setVisibility(View.GONE);
+            return;
+        }
+        progressRow.setVisibility(View.VISIBLE);
+        durationLabel.setText(PlayerService.formatTime(p[1]));
+        if (!dragging) {
+            seekBar.setMax((int) p[1]);
+            seekBar.setProgress((int) p[0]);
+            positionLabel.setText(PlayerService.formatTime(p[0]));
+        }
+    }
+
+    private void seekTo(int positionMs) {
+        Intent i = new Intent(this, PlayerService.class);
+        i.setAction(PlayerService.ACTION_SEEK);
+        i.putExtra(PlayerService.EXTRA_POSITION, positionMs);
+        startService(i);
     }
 
     // ---------------------------------------------------------------- Abspielen
@@ -519,7 +684,7 @@ public class MainActivity extends Activity {
         hexEdit.setSingleLine(true);
         hexEdit.setText(Tile.toHex(tile.color));
         GridLayout swatches = new GridLayout(this);
-        swatches.setColumnCount(6);
+        swatches.setColumnCount(7);
         List<View> swatchViews = new ArrayList<>();
         for (int color : PALETTE) {
             View sw = new View(this);
@@ -539,6 +704,65 @@ public class MainActivity extends Activity {
         markSwatches(swatchViews, tile.color);
         box.addView(swatches);
         box.addView(hexEdit);
+
+        caption(box, "Logo (leer = nur Beschriftung)");
+        LinearLayout logoRow = new LinearLayout(this);
+        logoRow.setOrientation(LinearLayout.HORIZONTAL);
+        logoRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView preview = new ImageView(this);
+        preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        GradientDrawable previewBg = new GradientDrawable();
+        previewBg.setShape(GradientDrawable.OVAL);
+        previewBg.setColor(0xFFEEEEEE);
+        preview.setBackground(previewBg);
+        preview.setPadding(dp(8), dp(8), dp(8), dp(8));
+        LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(dp(72), dp(72));
+        previewLp.setMarginEnd(dp(12));
+        logoRow.addView(preview, previewLp);
+        EditText logoEdit = new EditText(this);
+        logoEdit.setSingleLine(true);
+        logoEdit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        logoEdit.setHint("https://… Bildadresse (PNG/JPG)");
+        logoEdit.setText(tile.logo);
+        logoRow.addView(logoEdit, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        box.addView(logoRow);
+        loadPreview(preview, tile.logo, false);
+
+        LinearLayout logoButtons = new LinearLayout(this);
+        logoButtons.setOrientation(LinearLayout.HORIZONTAL);
+        TextView findLogo = pillButton("Logo suchen", 0xFF757575);
+        findLogo.setOnClickListener(x -> {
+            String query;
+            String value = valueEdit.getText().toString().trim();
+            if (Tile.SEARCH.equals(TYPES[selected[0]]) && !value.isEmpty() && !value.startsWith("http")) {
+                query = value;
+            } else {
+                query = labelEdit.getText().toString().replace('\n', ' ').trim();
+            }
+            searchLogo(query, url -> {
+                logoEdit.setText(url);
+                loadPreview(preview, url, true);
+            });
+        });
+        TextView clearLogo = pillButton("Entfernen", 0xFF757575);
+        clearLogo.setOnClickListener(x -> {
+            logoEdit.setText("");
+            preview.setImageDrawable(null);
+        });
+        TextView testLogo = pillButton("Vorschau", 0xFF757575);
+        testLogo.setOnClickListener(x -> loadPreview(preview, logoEdit.getText().toString(), true));
+        LinearLayout.LayoutParams lbLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
+        lbLp.setMarginEnd(dp(12));
+        lbLp.topMargin = dp(8);
+        logoButtons.addView(findLogo, lbLp);
+        LinearLayout.LayoutParams lbLp2 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
+        lbLp2.setMarginEnd(dp(12));
+        lbLp2.topMargin = dp(8);
+        logoButtons.addView(testLogo, lbLp2);
+        LinearLayout.LayoutParams lbLp3 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
+        lbLp3.topMargin = dp(8);
+        logoButtons.addView(clearLogo, lbLp3);
+        box.addView(logoButtons);
 
         if (!isNew) {
             caption(box, "Position");
@@ -584,11 +808,12 @@ public class MainActivity extends Activity {
                 tile.value = value;
                 tile.type = TYPES[selected[0]];
                 tile.color = parseColor(hexEdit.getText().toString(), chosenColor[0]);
+                tile.logo = logoEdit.getText().toString().trim();
                 if (isNew) {
                     tiles.add(tile);
                 }
                 TileStore.save(this, tiles);
-                rebuildGrid();
+                showIndex(tiles.indexOf(tile));
                 dialog.dismiss();
             });
             if (!isNew) {
@@ -615,10 +840,72 @@ public class MainActivity extends Activity {
             d.setShape(GradientDrawable.OVAL);
             d.setColor(c);
             if ((c & 0xFFFFFF) == (selectedColor & 0xFFFFFF)) {
-                d.setStroke(dp(4), 0xFF212121);
+                d.setStroke(dp(4), 0xFFFFC107);
+            } else {
+                d.setStroke(dp(1), 0xFFBDBDBD);
             }
             sw.setBackground(d);
         }
+    }
+
+    private void loadPreview(ImageView preview, String url, boolean complain) {
+        String address = url == null ? "" : url.trim();
+        if (address.isEmpty()) {
+            preview.setImageDrawable(null);
+            return;
+        }
+        LogoCache.load(this, address, dp(72), bitmap -> {
+            preview.setImageBitmap(bitmap);
+            if (bitmap == null && complain) {
+                Toast.makeText(this, "Logo konnte nicht geladen werden (SVG wird nicht unterstützt)",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /** Sucht Senderlogos bei radio-browser.info und laesst eines auswaehlen. */
+    private void searchLogo(String query, Consumer<String> onPick) {
+        if (query.isEmpty()) {
+            Toast.makeText(this, "Erst eine Beschriftung oder einen Sendernamen eingeben", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, "Suche Logos für „" + query + "“ …", Toast.LENGTH_SHORT).show();
+        background.execute(() -> {
+            List<RadioBrowser.Station> found;
+            try {
+                found = RadioBrowser.search(query, 40);
+            } catch (IOException e) {
+                runOnUiThread(() -> Toast.makeText(this, "Suche fehlgeschlagen: " + e.getMessage(),
+                        Toast.LENGTH_LONG).show());
+                return;
+            }
+            List<RadioBrowser.Station> withLogo = new ArrayList<>();
+            for (RadioBrowser.Station s : found) {
+                if (!s.favicon.isEmpty()) {
+                    withLogo.add(s);
+                }
+            }
+            runOnUiThread(() -> {
+                if (isFinishing()) {
+                    return;
+                }
+                if (withLogo.isEmpty()) {
+                    Toast.makeText(this, "Kein Logo gefunden – anderen Namen in der Beschriftung probieren",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                String[] names = new String[withLogo.size()];
+                for (int i = 0; i < names.length; i++) {
+                    RadioBrowser.Station s = withLogo.get(i);
+                    names[i] = s.country.isEmpty() ? s.name : s.name + " (" + s.country + ")";
+                }
+                new AlertDialog.Builder(this)
+                        .setTitle("Logo auswählen")
+                        .setItems(names, (d, which) -> onPick.accept(withLogo.get(which).favicon))
+                        .setNegativeButton("Abbrechen", null)
+                        .show();
+            });
+        });
     }
 
     private void move(Tile tile, int delta) {
@@ -629,7 +916,7 @@ public class MainActivity extends Activity {
         }
         Collections.swap(tiles, from, to);
         TileStore.save(this, tiles);
-        rebuildGrid();
+        showIndex(to);
         Toast.makeText(this, "Position " + (to + 1) + " von " + tiles.size(), Toast.LENGTH_SHORT).show();
     }
 
@@ -670,6 +957,93 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("App auswählen")
                 .setItems(names, (d, which) -> onPick.accept(apps.get(which)[1], apps.get(which)[0]))
+                .setNegativeButton("Abbrechen", null)
+                .show();
+    }
+
+    // ---------------------------------------------------------------- Sichern & Wiederherstellen
+
+    private void exportTiles() {
+        Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("application/json");
+        i.putExtra(Intent.EXTRA_TITLE, "echo-radio-knoepfe.json");
+        try {
+            startActivityForResult(i, REQUEST_EXPORT);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Kein Dateidialog verfügbar", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void importTiles() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        try {
+            startActivityForResult(i, REQUEST_IMPORT);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Kein Dateidialog verfügbar", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            return;
+        }
+        Uri uri = data.getData();
+        if (requestCode == REQUEST_EXPORT) {
+            writeBackup(uri);
+        } else if (requestCode == REQUEST_IMPORT) {
+            readBackup(uri);
+        }
+    }
+
+    private void writeBackup(Uri uri) {
+        try (OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
+            if (out == null) {
+                throw new IOException("Datei lässt sich nicht öffnen");
+            }
+            out.write(TileStore.exportJson(tiles).getBytes(StandardCharsets.UTF_8));
+            Toast.makeText(this, tiles.size() + " Knöpfe gesichert", Toast.LENGTH_LONG).show();
+        } catch (IOException | JSONException e) {
+            Toast.makeText(this, "Sichern fehlgeschlagen: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void readBackup(Uri uri) {
+        List<Tile> imported;
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) {
+                throw new IOException("Datei lässt sich nicht öffnen");
+            }
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int n;
+            while ((n = in.read(chunk)) > 0) {
+                buf.write(chunk, 0, n);
+                if (buf.size() > 2 * 1024 * 1024) {
+                    throw new IOException("Datei zu groß");
+                }
+            }
+            imported = TileStore.parseImport(new String(buf.toByteArray(), StandardCharsets.UTF_8));
+        } catch (IOException | JSONException e) {
+            Toast.makeText(this, "Datei konnte nicht gelesen werden: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(imported.size() + " Knöpfe laden?")
+                .setMessage("Die aktuellen " + tiles.size() + " Knöpfe werden dabei ersetzt.")
+                .setPositiveButton("Laden", (d, which) -> {
+                    stopPlayback();
+                    tiles.clear();
+                    tiles.addAll(imported);
+                    TileStore.save(this, tiles);
+                    page = 0;
+                    rebuildGrid();
+                    Toast.makeText(this, imported.size() + " Knöpfe geladen", Toast.LENGTH_LONG).show();
+                })
                 .setNegativeButton("Abbrechen", null)
                 .show();
     }
@@ -716,7 +1090,7 @@ public class MainActivity extends Activity {
         b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
         b.setGravity(Gravity.CENTER);
-        b.setPadding(dp(28), 0, dp(28), 0);
+        b.setPadding(dp(24), 0, dp(24), 0);
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setCornerRadius(dp(28));

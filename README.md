@@ -8,6 +8,14 @@ Frei konfigurierbare Senderknöpfe für den Amazon Echo Show 8 (1. Gen, *crown*)
 - **Bearbeiten** (unten): Knopf antippen öffnet den Editor, **+** legt einen neuen an, **Fertig** beendet.
 - **Langer Druck** auf einen Knopf öffnet den Editor jederzeit.
 - Kann als Startbildschirm (Home) gewählt werden.
+- Mehr Knöpfe als auf eine Seite passen (max. 12): Seiten zum Wischen, Punkte unten zeigen die Seite.
+
+### Radio
+
+- Bricht die Verbindung ab (WLAN-Aussetzer, Stream hängt > 20 s), verbindet die App automatisch neu:
+  nach 3, 5, 10, 20, dann alle 30 s, höchstens 20 Versuche. Kommt das WLAN zurück, sofort.
+- Schickt der Sender Titel und Interpret mit (ICY-Metadaten), stehen sie in der Statuszeile.
+  Dafür liest die App den Stream über eine zweite Verbindung mit (doppelte Datenmenge).
 
 ### Podcasts (Art „Neueste Folge aus Podcast-Feed“)
 
@@ -27,8 +35,15 @@ sodass die Knöpfe möglichst groß werden.
 | Art | Radio-Stream · neueste Folge aus Podcast-Feed · Sender suchen (radio-browser.info) · App oder Webseite |
 | Ziel | Stream-/Feed-Adresse, Sendername oder Paketname (Liste über „App auswählen“). Bei Apps mehrere Ziele mit `\|` trennen, das erste vorhandene wird gestartet |
 | Farbe | 12 Vorgaben oder eigener Farbcode `#RRGGBB` |
+| Logo | Bildadresse (PNG/JPG), „Logo suchen“ bei radio-browser.info, „Vorschau“, „Entfernen“. SVG geht nicht |
 | Position | nach vorne / nach hinten |
 | Löschen | entfernt den Knopf |
+
+## Sichern und Wiederherstellen
+
+Im Bearbeiten-Modus: **Sichern** speichert alle Knöpfe als `echo-radio-knoepfe.json`
+(z. B. in *Downloads*), **Laden** liest eine solche Datei wieder ein und ersetzt die aktuellen Knöpfe.
+Vom PC aus: `adb pull /sdcard/Download/echo-radio-knoepfe.json`
 
 ## Standardknöpfe
 
