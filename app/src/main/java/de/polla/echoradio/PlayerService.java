@@ -19,6 +19,7 @@ import android.util.Log;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Metadata;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
@@ -94,6 +95,11 @@ public class PlayerService extends Service {
     /** Ob in dieser Sitzung schon einmal etwas zu hoeren war. */
     private boolean everPlayed;
     private String lastTitle;
+    /** Liest Songtitel ueber eine eigene Verbindung, falls ExoPlayer keine liefert. */
+    private IcyReader icy;
+    private Runnable icyFallback;
+    /** Nach so vielen Sekunden ohne Titel von ExoPlayer selbst nachsehen. */
+    private static final int ICY_FALLBACK_MS = 12000;
     private int retryCount;
     private boolean waitingForRetry;
     private Runnable retryTask;
@@ -337,14 +343,23 @@ public class PlayerService extends Service {
                 }
                 for (int i = 0; i < metadata.length(); i++) {
                     Metadata.Entry entry = metadata.get(i);
+                    Log.d(TAG, "Metadaten: " + entry);
                     if (entry instanceof IcyInfo) {
-                        String title = ((IcyInfo) entry).title;
-                        if (title != null && !title.trim().isEmpty() && !title.trim().equals(lastTitle)) {
-                            lastTitle = title.trim();
-                            showText(lastTitle);
-                        }
+                        showTitle(((IcyInfo) entry).title, t);
                     }
                 }
+            }
+
+            @Override
+            public void onMediaMetadataChanged(MediaMetadata m) {
+                if (t != token || podcast || m.title == null) {
+                    return;
+                }
+                String title = m.title.toString();
+                if (m.artist != null && !title.contains(m.artist)) {
+                    title = m.artist + " – " + title;
+                }
+                showTitle(title, t);
             }
         });
         p.setMediaItem(MediaItem.fromUri(url));
@@ -378,8 +393,32 @@ public class PlayerService extends Service {
         showText(text);
         if (podcast) {
             main.postDelayed(autosave, AUTOSAVE_MS);
+        } else {
+            // Liefert ExoPlayer keine Songtitel, selbst beim Sender nachfragen
+            final int t = token;
+            icyFallback = () -> {
+                if (t == token && lastTitle == null && icy == null) {
+                    Log.i(TAG, "Keine Titel von ExoPlayer, lese selbst mit");
+                    icy = new IcyReader(url, title -> main.post(() -> showTitle(title, t)));
+                    icy.start();
+                }
+            };
+            main.postDelayed(icyFallback, ICY_FALLBACK_MS);
         }
         Log.i(TAG, "Spielt: " + url);
+    }
+
+    /** Zeigt einen Songtitel an (aus ExoPlayer oder dem eigenen Leser). */
+    private void showTitle(String title, int t) {
+        if (t != token || playingId == null || title == null) {
+            return;
+        }
+        String clean = title.trim();
+        if (clean.isEmpty() || clean.equals(lastTitle)) {
+            return;
+        }
+        lastTitle = clean;
+        showText(clean);
     }
 
     private void scheduleStallCheck(String reason, int t) {
@@ -480,6 +519,14 @@ public class PlayerService extends Service {
     }
 
     private void releasePlayer() {
+        if (icyFallback != null) {
+            main.removeCallbacks(icyFallback);
+            icyFallback = null;
+        }
+        if (icy != null) {
+            icy.stop();
+            icy = null;
+        }
         if (player != null) {
             player.release();
             player = null;
