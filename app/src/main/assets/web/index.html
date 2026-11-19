@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Echo Radio</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --blue: #00A0E3; --bg: #f4f6f8; --card: #fff; --text: #1f2933; --muted: #6b7785;
+    --line: #e3e8ee; --danger: #e53935; --amber: #ffc107;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header.top { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: #fff;
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+  .brand { font-weight: 700; font-size: 18px; white-space: nowrap; }
+  .now { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); }
+  #nowText { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #cfd6dd; flex: none; }
+  .dot.on { background: #43a047; box-shadow: 0 0 0 4px rgba(67,160,71,.15); }
+  .vol { display: flex; align-items: center; gap: 8px; color: var(--muted); white-space: nowrap; }
+  .vol input { width: 160px; }
+  .btn { appearance: none; border: 1px solid var(--line); background: #fff; color: var(--text); padding: 8px 14px;
+    border-radius: 999px; font: inherit; cursor: pointer; text-decoration: none; display: inline-flex;
+    align-items: center; gap: 6px; white-space: nowrap; }
+  .btn:hover { border-color: #b9c3ce; }
+  .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .btn.small { padding: 6px 11px; font-size: 14px; }
+  .banner { display: flex; gap: 12px; align-items: center; justify-content: center; background: #fff4e5;
+    color: #7a4b00; padding: 10px 20px; border-bottom: 1px solid #ffd8a8; }
+  .hidden { display: none !important; }
+  main { display: grid; grid-template-columns: 1fr 390px; gap: 20px; padding: 20px; max-width: 1320px; margin: 0 auto; }
+  @media (max-width: 920px) { main { grid-template-columns: 1fr; } .vol input { width: 100px; } }
+  .board, .editor { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .editor { align-self: start; position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow: auto; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .save-state { margin-left: auto; color: var(--muted); font-size: 14px; }
+  .save-state.err { color: var(--danger); }
+  .hint { color: var(--muted); font-size: 13px; margin: 12px 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(138px, 1fr)); gap: 14px; }
+  .card { position: relative; display: flex; justify-content: center; padding: 10px; border-radius: 14px;
+    cursor: pointer; border: 2px solid transparent; }
+  .card:hover { background: #f7f9fb; }
+  .card.selected { border-color: var(--blue); background: #eef8fd; }
+  .card.over { border-style: dashed; border-color: #9aa5b1; }
+  .card.dragging { opacity: .35; }
+  .circle { width: 112px; height: 112px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    text-align: center; font-weight: 700; overflow: hidden; position: relative; padding: 12px; user-select: none; flex: none; }
+  .circle.light { box-shadow: inset 0 0 0 2px #e0e0e0; }
+  .circle .label { white-space: pre-line; line-height: 1.15; }
+  .circle img { display: none; max-width: 70%; max-height: 70%; object-fit: contain; }
+  .circle.has-logo img { display: block; }
+  .circle.has-logo .label { display: none; }
+  .circle.playing { box-shadow: 0 0 0 5px var(--amber); }
+  .play { position: absolute; right: 12px; bottom: 8px; width: 34px; height: 34px; border-radius: 50%; border: none;
+    background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); cursor: pointer; font-size: 13px; }
+  .editor h2 { margin: 0 0 10px; font-size: 17px; }
+  .preview { display: flex; justify-content: center; margin: 4px 0 16px; }
+  .field { margin-bottom: 14px; }
+  .field > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+  .field input[type=text], .field textarea, .field select { width: 100%; border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; font: inherit; background: #fff; }
+  .field textarea { resize: vertical; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .swatch { width: 28px; height: 28px; border-radius: 50%; border: 1px solid #cfd6dd; cursor: pointer; padding: 0; }
+  .swatch.sel { box-shadow: 0 0 0 3px var(--amber); }
+  input[type=color] { width: 44px; height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: #fff; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .logo-results { display: grid; gap: 6px; margin-top: 8px; max-height: 260px; overflow: auto; }
+  .logo-result { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); background: #fff;
+    border-radius: 8px; padding: 6px; cursor: pointer; text-align: left; font: inherit; }
+  .logo-result:hover { border-color: var(--blue); }
+  .logo-result img { width: 40px; height: 40px; object-fit: contain; flex: none; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .warn { color: #b26a00; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 10px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 6px; }
+  .actions .spacer { flex: 1; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">Echo Radio</div>
+  <div class="now"><span class="dot" id="nowDot"></span><span id="nowText">Verbinde …</span></div>
+  <div class="vol">🔊 <input type="range" id="volume" min="0" max="100" value="0"> <span id="volText">–</span></div>
+  <button class="btn danger" id="stopBtn">Stopp</button>
+</header>
+
+<div class="banner hidden" id="banner">
+  <span id="bannerText"></span>
+  <button class="btn small" id="reloadBtn">Neu laden</button>
+</div>
+
+<main>
+  <section class="board">
+    <div class="toolbar">
+      <button class="btn primary" id="addBtn">+ Neuer Knopf</button>
+      <button class="btn" id="exportBtn">Sicherung herunterladen</button>
+      <label class="btn">Sicherung laden<input type="file" id="importFile" accept=".json,application/json" hidden></label>
+      <span class="save-state" id="saveState"></span>
+    </div>
+    <p class="hint">Knopf anklicken zum Bearbeiten · ziehen zum Sortieren · ▶ spielt auf dem Echo ab.
+      Änderungen werden sofort auf den Echo übernommen.</p>
+    <div class="grid" id="grid"></div>
+  </section>
+  <aside class="editor" id="editor"></aside>
+</main>
+
+<script>
+"use strict";
+
+const TYPES = [
+  { id: "stream", name: "Radio-Stream (Adresse)", hint: "https://… Stream-Adresse" },
+  { id: "rss", name: "Neueste Folge aus Podcast-Feed", hint: "https://… Feed-Adresse" },
+  { id: "search", name: "Sender suchen (radio-browser.info)", hint: "Sendername, z. B. Brillux Radio" },
+  { id: "app", name: "App oder Webseite öffnen", hint: "Paketname oder https://… (mehrere mit | trennen)" },
+];
+const PALETTE = ["#00A0E3", "#1565C0", "#00897B", "#43A047", "#7CB342", "#FDD835", "#FB8C00",
+  "#E53935", "#D81B60", "#8E24AA", "#6D4C41", "#546E7A", "#FFFFFF", "#212121"];
+
+let tiles = [];
+let revision = 0;
+let selectedId = null;
+let playingId = null;
+let apps = null;
+let saveTimer = null;
+let saving = false;
+let pendingSave = false;
+let conflict = false;
+let dragId = null;
+let volDragging = false;
+
+const $ = (id) => document.getElementById(id);
+
+function el(tag, props = {}, children = []) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) if (c) e.append(c);
+  return e;
+}
+
+async function api(method, path, body) {
+  const opt = { method, headers: {} };
+  if (body !== undefined) {
+    opt.headers["Content-Type"] = "application/json";
+    opt.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, opt);
+  let data = {};
+  try { data = await r.json(); } catch (e) { /* keine JSON-Antwort */ }
+  if (!r.ok) {
+    const err = new Error(data.error || ("HTTP " + r.status));
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+}
+
+function newId() {
+  return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
+function setSave(text, isError) {
+  const s = $("saveState");
+  s.textContent = text;
+  s.classList.toggle("err", !!isError);
+}
+
+function showBanner(text) {
+  $("bannerText").textContent = text;
+  $("banner").classList.remove("hidden");
+}
+
+function hideBanner() {
+  $("banner").classList.add("hidden");
+}
+
+function isLight(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.7;
+}
+
+function displayName(t) {
+  return (t.label || "").replace(/\n/g, " ").trim() || "(ohne Namen)";
+}
+
+// ------------------------------------------------------------ Laden & Speichern
+
+async function load() {
+  try {
+    const d = await api("GET", "/api/tiles");
+    tiles = d.tiles;
+    revision = d.revision;
+    conflict = false;
+    hideBanner();
+    if (selectedId && !tiles.find((t) => t.id === selectedId)) selectedId = null;
+    renderGrid();
+    renderEditor();
+    setSave("");
+  } catch (e) {
+    setSave("Echo nicht erreichbar: " + e.message, true);
+  }
+}
+
+function scheduleSave() {
+  if (conflict) return;
+  setSave("Ungespeichert …");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { saveTimer = null; save(); }, 600);
+}
+
+async function save() {
+  if (conflict) return;
+  if (saving) { pendingSave = true; return; }
+  saving = true;
+  setSave("Speichere …");
+  try {
+    const d = await api("PUT", "/api/tiles", { revision, tiles });
+    revision = d.revision;
+    setSave("Auf dem Echo gespeichert ✓");
+  } catch (e) {
+    if (e.status === 409) {
+      conflict = true;
+      setSave("");
+      showBanner("Auf dem Echo wurde inzwischen etwas geändert – deine letzte Änderung wurde nicht übernommen.");
+    } else {
+      setSave("Speichern fehlgeschlagen: " + e.message, true);
+    }
+  } finally {
+    saving = false;
+    if (pendingSave) { pendingSave = false; save(); }
+  }
+}
+
+async function flushSave() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    await save();
+  }
+}
+
+// ------------------------------------------------------------ Darstellung
+
+/** Einheitliche Schriftgroesse wie auf dem Echo: passend zur laengsten Zeile aller Knoepfe. */
+function labelSize(px) {
+  let longest = 1;
+  tiles.forEach((t) => (t.label || "").split("\n").forEach((l) => { longest = Math.max(longest, l.trim().length); }));
+  const f = Math.max(0.08, Math.min(0.22, 0.72 / (longest * 0.58)));
+  return Math.round(px * f) + "px";
+}
+
+function circleFor(t) {
+  const c = el("div", { class: "circle" });
+  c.style.fontSize = labelSize(112);
+  c.style.background = t.color || "#00A0E3";
+  c.style.color = isLight(t.color) ? "#212121" : "#fff";
+  if (isLight(t.color)) c.classList.add("light");
+  c.append(el("span", { class: "label", text: t.label || "—" }));
+  if (t.logo) {
+    const img = el("img", { alt: "" });
+    img.addEventListener("load", () => c.classList.add("has-logo"));
+    img.addEventListener("error", () => img.remove());
+    img.src = t.logo;
+    c.append(img);
+  }
+  if (t.id === playingId) c.classList.add("playing");
+  return c;
+}
+
+function renderGrid() {
+  const grid = $("grid");
+  grid.replaceChildren();
+  tiles.forEach((t) => {
+    const card = el("div", { class: "card" + (t.id === selectedId ? " selected" : ""), draggable: "true",
+      title: displayName(t) });
+    card.append(circleFor(t));
+    if (t.type !== "app") {
+      card.append(el("button", {
+        class: "play",
+        title: t.id === playingId ? "Stoppen" : "Auf dem Echo abspielen",
+        text: t.id === playingId ? "■" : "▶",
+        onclick: (ev) => { ev.stopPropagation(); togglePlay(t); },
+      }));
+    }
+    card.addEventListener("click", () => { selectedId = t.id; renderGrid(); renderEditor(); });
+    card.addEventListener("dragstart", (ev) => {
+      dragId = t.id;
+      card.classList.add("dragging");
+      ev.dataTransfer.effectAllowed = "move";
+      ev.dataTransfer.setData("text/plain", t.id);
+    });
+    card.addEventListener("dragend", () => {
+      dragId = null;
+      document.querySelectorAll(".card.over, .card.dragging")
+        .forEach((x) => x.classList.remove("over", "dragging"));
+    });
+    card.addEventListener("dragover", (ev) => { ev.preventDefault(); card.classList.add("over"); });
+    card.addEventListener("dragleave", () => card.classList.remove("over"));
+    card.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      card.classList.remove("over");
+      const from = tiles.findIndex((x) => x.id === dragId);
+      const to = tiles.findIndex((x) => x.id === t.id);
+      if (from < 0 || to < 0 || from === to) return;
+      const [moved] = tiles.splice(from, 1);
+      tiles.splice(to, 0, moved);
+      renderGrid();
+      scheduleSave();
+    });
+    grid.append(card);
+  });
+  if (tiles.length === 0) {
+    grid.append(el("div", { class: "empty", text: "Noch keine Knöpfe – lege mit „+ Neuer Knopf“ einen an." }));
+  }
+}
+
+function field(labelText, control, note) {
+  const f = el("div", { class: "field" }, [el("label", { text: labelText }), control]);
+  if (note) f.append(note);
+  return f;
+}
+
+function renderEditor() {
+  const box = $("editor");
+  box.replaceChildren();
+  const t = tiles.find((x) => x.id === selectedId);
+  if (!t) {
+    box.append(el("div", { class: "empty", text: "Wähle links einen Knopf aus oder lege mit „+ Neuer Knopf“ einen an." }));
+    return;
+  }
+  const type = TYPES.find((x) => x.id === t.type) || TYPES[0];
+
+  box.append(el("h2", { text: "Knopf bearbeiten" }));
+  const preview = el("div", { class: "preview" }, circleFor(t));
+  box.append(preview);
+  const changed = () => {
+    preview.replaceChildren(circleFor(t));
+    renderGrid();
+    scheduleSave();
+  };
+
+  // Beschriftung
+  const label = el("textarea", { rows: "2" });
+  label.value = t.label || "";
+  label.addEventListener("input", () => {
+    t.label = label.value.split("\n").slice(0, 2).join("\n");
+    changed();
+  });
+  box.append(field("Beschriftung (Enter = zweite Zeile)", label));
+
+  // Art
+  const sel = el("select");
+  TYPES.forEach((x) => {
+    const o = el("option", { value: x.id, text: x.name });
+    if (x.id === type.id) o.selected = true;
+    sel.append(o);
+  });
+  sel.addEventListener("change", () => { t.type = sel.value; changed(); renderEditor(); });
+  box.append(field("Art", sel));
+
+  // Ziel
+  const value = el("input", { type: "text", placeholder: type.hint });
+  value.value = t.value || "";
+  value.addEventListener("input", () => { t.value = value.value.trim(); changed(); });
+  const valueField = field("Ziel", value);
+  if (t.type === "app") {
+    const appSel = el("select");
+    appSel.append(el("option", { value: "", text: apps === null ? "Apps werden geladen …" : "— App auswählen —" }));
+    (apps || []).forEach((a) => {
+      const o = el("option", { value: a.package, text: a.name + "  (" + a.package + ")" });
+      if (a.package === t.value) o.selected = true;
+      appSel.append(o);
+    });
+    appSel.addEventListener("change", () => {
+      if (!appSel.value) return;
+      const a = apps.find((x) => x.package === appSel.value);
+      t.value = appSel.value;
+      if (!t.label && a) t.label = a.name;
+      changed();
+      renderEditor();
+    });
+    appSel.style.marginTop = "8px";
+    valueField.append(appSel);
+    if (apps === null) {
+      apps = [];
+      api("GET", "/api/apps").then((d) => {
+        apps = d.apps;
+        const cur = tiles.find((x) => x.id === selectedId);
+        if (cur && cur.type === "app") renderEditor();
+      }).catch(() => { apps = null; });
+    }
+  }
+  box.append(valueField);
+
+  // Farbe
+  const swatches = el("div", { class: "swatches" });
+  const picker = el("input", { type: "color" });
+  picker.value = /^#[0-9a-f]{6}$/i.test(t.color || "") ? t.color.toLowerCase() : "#00a0e3";
+  const markSwatches = () => swatches.querySelectorAll(".swatch").forEach((s) =>
+    s.classList.toggle("sel", s.dataset.color.toUpperCase() === (t.color || "").toUpperCase()));
+  PALETTE.forEach((c) => {
+    const s = el("button", { class: "swatch", title: c });
+    s.dataset.color = c;
+    s.style.background = c;
+    s.addEventListener("click", () => {
+      t.color = c;
+      picker.value = c.toLowerCase();
+      markSwatches();
+      changed();
+    });
+    swatches.append(s);
+  });
+  picker.addEventListener("input", () => { t.color = picker.value.toUpperCase(); markSwatches(); changed(); });
+  swatches.append(picker);
+  markSwatches();
+  box.append(field("Farbe", swatches));
+
+  // Logo
+  const logo = el("input", { type: "text", placeholder: "https://… Bildadresse (PNG/JPG), leer = nur Text" });
+  logo.value = t.logo || "";
+  const logoNote = el("div", { class: "note" });
+  const updateLogoNote = () => {
+    const svg = /\.svg(\?|$)/i.test(t.logo || "");
+    logoNote.className = "note" + (svg ? " warn" : "");
+    logoNote.textContent = svg
+      ? "Achtung: SVG-Bilder kann der Echo nicht anzeigen – dort erscheint dann die Beschriftung."
+      : "Logos ersetzen auf dem Echo den Text im Kreis.";
+  };
+  updateLogoNote();
+  logo.addEventListener("input", () => { t.logo = logo.value.trim(); updateLogoNote(); changed(); });
+  const results = el("div", { class: "logo-results" });
+  const searchBtn = el("button", { class: "btn small", text: "Logo suchen", onclick: () => searchLogos(t, results, logo, updateLogoNote, changed) });
+  const clearBtn = el("button", { class: "btn small", text: "Entfernen", onclick: () => {
+    t.logo = "";
+    logo.value = "";
+    results.replaceChildren();
+    updateLogoNote();
+    changed();
+  } });
+  const logoField = field("Logo", logo, logoNote);
+  logoField.append(el("div", { class: "row" }, [searchBtn, clearBtn]), results);
+  box.append(logoField);
+
+  // Aktionen
+  const idx = tiles.indexOf(t);
+  const actions = el("div", { class: "actions" });
+  if (t.type !== "app") {
+    actions.append(el("button", { class: "btn primary small", text: t.id === playingId ? "■ Stoppen" : "▶ Abspielen",
+      onclick: () => togglePlay(t) }));
+  }
+  actions.append(
+    el("button", { class: "btn small", text: "◀", title: "nach vorne", onclick: () => move(t, -1) }),
+    el("button", { class: "btn small", text: "▶", title: "nach hinten", onclick: () => move(t, 1) }),
+    el("span", { class: "spacer" }),
+    el("button", { class: "btn danger small", text: "Löschen", onclick: () => removeTile(t) }),
+  );
+  if (idx === 0) actions.children[t.type !== "app" ? 1 : 0].disabled = true;
+  if (idx === tiles.length - 1) actions.children[t.type !== "app" ? 2 : 1].disabled = true;
+  box.append(actions);
+}
+
+async function searchLogos(t, results, logoInput, updateNote, changed) {
+  const q = (t.type === "search" && t.value && !/^https?:/i.test(t.value))
+    ? t.value : (t.label || "").replace(/\n/g, " ").trim();
+  if (!q) {
+    results.replaceChildren(el("div", { class: "note", text: "Erst eine Beschriftung eingeben." }));
+    return;
+  }
+  results.replaceChildren(el("div", { class: "note", text: "Suche „" + q + "“ …" }));
+  try {
+    const d = await api("GET", "/api/logos?q=" + encodeURIComponent(q));
+    results.replaceChildren();
+    if (!d.results.length) {
+      results.append(el("div", { class: "note", text: "Kein Logo gefunden – anderen Namen in der Beschriftung probieren." }));
+      return;
+    }
+    d.results.forEach((r) => {
+      const img = el("img", { alt: "" });
+      img.addEventListener("error", () => { img.style.visibility = "hidden"; });
+      img.src = r.favicon;
+      const name = r.country ? r.name + " (" + r.country + ")" : r.name;
+      results.append(el("button", { class: "logo-result", onclick: () => {
+        t.logo = r.favicon;
+        logoInput.value = r.favicon;
+        results.replaceChildren();
+        updateNote();
+        changed();
+      } }, [img, el("span", { text: name })]));
+    });
+  } catch (e) {
+    results.replaceChildren(el("div", { class: "note warn", text: "Suche fehlgeschlagen: " + e.message }));
+  }
+}
+
+// ------------------------------------------------------------ Aktionen
+
+function move(t, delta) {
+  const from = tiles.indexOf(t);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= tiles.length) return;
+  tiles.splice(from, 1);
+  tiles.splice(to, 0, t);
+  renderGrid();
+  renderEditor();
+  scheduleSave();
+}
+
+function removeTile(t) {
+  if (!confirm("„" + displayName(t) + "“ löschen?")) return;
+  tiles = tiles.filter((x) => x !== t);
+  selectedId = null;
+  renderGrid();
+  renderEditor();
+  scheduleSave();
+}
+
+async function togglePlay(t) {
+  try {
+    if (playingId === t.id) {
+      await api("POST", "/api/stop");
+    } else {
+      await flushSave();
+      await api("POST", "/api/play?id=" + encodeURIComponent(t.id));
+    }
+    setTimeout(poll, 400);
+    setTimeout(poll, 1500);
+  } catch (e) {
+    setSave(e.message, true);
+  }
+}
+
+function normalize(list) {
+  const seen = new Set();
+  return list.filter((x) => x && typeof x === "object").map((x) => {
+    let id = typeof x.id === "string" && x.id ? x.id : newId();
+    if (seen.has(id)) id = newId();
+    seen.add(id);
+    return {
+      id,
+      label: String(x.label || ""),
+      type: TYPES.some((y) => y.id === x.type) ? x.type : "stream",
+      value: String(x.value || ""),
+      color: /^#[0-9a-f]{6}$/i.test(x.color || "") ? x.color.toUpperCase() : "#00A0E3",
+      logo: String(x.logo || ""),
+    };
+  });
+}
+
+// ------------------------------------------------------------ Status & Fernbedienung
+
+async function poll() {
+  try {
+    const d = await api("GET", "/api/status");
+    const before = playingId;
+    playingId = d.playing;
+    $("nowText").textContent = d.status || "Bereit";
+    $("nowDot").classList.toggle("on", !!d.playing);
+    if (!volDragging) {
+      $("volume").value = d.volume;
+      $("volText").textContent = d.volume + " %";
+    }
+    if (d.revision !== revision && !saving && !saveTimer && !conflict) {
+      // Am Echo selbst geaendert: neu laden
+      await load();
+    } else if (before !== playingId) {
+      renderGrid();
+      renderEditor();
+    }
+  } catch (e) {
+    $("nowText").textContent = "Echo nicht erreichbar";
+    $("nowDot").classList.remove("on");
+  }
+}
+
+$("stopBtn").addEventListener("click", async () => {
+  try { await api("POST", "/api/stop"); } catch (e) { /* egal */ }
+  setTimeout(poll, 400);
+});
+
+const vol = $("volume");
+vol.addEventListener("pointerdown", () => { volDragging = true; });
+vol.addEventListener("input", () => { $("volText").textContent = vol.value + " %"; });
+vol.addEventListener("change", async () => {
+  try { await api("POST", "/api/volume?level=" + vol.value); } catch (e) { /* egal */ }
+  volDragging = false;
+});
+
+$("addBtn").addEventListener("click", () => {
+  const t = { id: newId(), label: "Neu", type: "stream", value: "", color: "#00A0E3", logo: "" };
+  tiles.push(t);
+  selectedId = t.id;
+  renderGrid();
+  renderEditor();
+  scheduleSave();
+  const ta = document.querySelector("#editor textarea");
+  if (ta) { ta.focus(); ta.select(); }
+});
+
+$("exportBtn").addEventListener("click", async () => {
+  await flushSave();
+  window.location.href = "/api/export";
+});
+
+$("importFile").addEventListener("change", async (ev) => {
+  const file = ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  let list;
+  try {
+    const j = JSON.parse(await file.text());
+    const raw = Array.isArray(j) ? j : (j && j.tiles);
+    if (!Array.isArray(raw)) throw new Error("keine Knöpfe in der Datei");
+    list = normalize(raw);
+  } catch (e) {
+    alert("Datei konnte nicht gelesen werden: " + e.message);
+    return;
+  }
+  if (!confirm(list.length + " Knöpfe laden? Die aktuellen " + tiles.length + " Knöpfe werden ersetzt.")) return;
+  tiles = list;
+  selectedId = null;
+  renderGrid();
+  renderEditor();
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  await save();
+});
+
+$("reloadBtn").addEventListener("click", load);
+
+load().then(poll);
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

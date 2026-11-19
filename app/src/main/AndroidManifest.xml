@@ -45,5 +45,10 @@
         <service
             android:name=".PlayerService"
             android:exported="false" />
+
+        <!-- Weboberflaeche auf Port 8080 -->
+        <service
+            android:name=".WebService"
+            android:exported="false" />
     </application>
 </manifest>

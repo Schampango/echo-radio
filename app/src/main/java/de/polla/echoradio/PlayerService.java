@@ -187,6 +187,27 @@ public class PlayerService extends Service {
         }
     }
 
+    /** Startet die Wiedergabe eines Knopfs (Stream, Podcast oder Sendersuche). */
+    static void play(android.content.Context context, Tile t) {
+        Intent i = new Intent(context, PlayerService.class);
+        i.setAction(ACTION_PLAY);
+        i.putExtra(EXTRA_ID, t.id);
+        i.putExtra(EXTRA_NAME, t.displayName());
+        i.putExtra(EXTRA_MODE, t.type);
+        i.putExtra(EXTRA_VALUE, t.value);
+        context.startForegroundService(i);
+    }
+
+    /** Stoppt die Wiedergabe, falls etwas laeuft. */
+    static void stop(android.content.Context context) {
+        if (currentId == null) {
+            return;
+        }
+        Intent i = new Intent(context, PlayerService.class);
+        i.setAction(ACTION_STOP);
+        context.startService(i);
+    }
+
     static String formatTime(long ms) {
         long total = Math.max(0, ms / 1000);
         long h = total / 3600;

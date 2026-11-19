@@ -92,6 +92,8 @@ public class MainActivity extends Activity {
     private static final int REQUEST_IMPORT = 2;
 
     private List<Tile> tiles;
+    /** Revision der Knoepfe, die gerade angezeigt werden. */
+    private int knownRevision;
     private boolean editMode;
     private int page;
     private int pageCount = 1;
@@ -125,7 +127,12 @@ public class MainActivity extends Activity {
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            refresh();
+            if (TileStore.ACTION_TILES_CHANGED.equals(intent.getAction())) {
+                // In der Weboberflaeche geaendert
+                reloadTiles();
+            } else {
+                refresh();
+            }
         }
     };
 
@@ -133,15 +140,27 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         tiles = TileStore.load(this);
+        knownRevision = TileStore.revision(this);
         // Die Lautstaerketasten am Echo regeln die Musik
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         buildUi();
+        try {
+            startForegroundService(new Intent(this, WebService.class));
+        } catch (RuntimeException e) {
+            // ohne Weboberflaeche weitermachen
+        }
     }
 
     @Override
     protected void onStart() {
         super.onStart();
-        registerReceiver(stateReceiver, new IntentFilter(PlayerService.ACTION_STATE));
+        IntentFilter filter = new IntentFilter(PlayerService.ACTION_STATE);
+        filter.addAction(TileStore.ACTION_TILES_CHANGED);
+        registerReceiver(stateReceiver, filter);
+        // Waehrend die App im Hintergrund war, kann im Browser etwas geaendert worden sein
+        if (TileStore.revision(this) != knownRevision) {
+            reloadTiles();
+        }
         refresh();
         ticker.post(tick);
     }
@@ -286,6 +305,18 @@ public class MainActivity extends Activity {
         backupButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
         restoreButton.setVisibility(editMode ? View.VISIBLE : View.GONE);
         stopButton.setVisibility(editMode ? View.GONE : View.VISIBLE);
+    }
+
+    private void saveTiles() {
+        TileStore.save(this, tiles);
+        knownRevision = TileStore.revision(this);
+    }
+
+    private void reloadTiles() {
+        tiles.clear();
+        tiles.addAll(TileStore.load(this));
+        knownRevision = TileStore.revision(this);
+        rebuildGrid();
     }
 
     private void toggleEditMode() {
@@ -527,7 +558,12 @@ public class MainActivity extends Activity {
         }
         String s = PlayerService.currentStatus;
         if (s == null || s.isEmpty()) {
-            s = editMode ? "Bearbeiten" : "Bereit";
+            if (editMode) {
+                String web = WebService.address();
+                s = web == null ? "Bearbeiten" : "Auch im Browser: " + web;
+            } else {
+                s = "Bereit";
+            }
         }
         if (pageCount > 1 && !editMode && PlayerService.currentId == null) {
             s = s + " · Seite " + (page + 1) + "/" + pageCount;
@@ -572,22 +608,11 @@ public class MainActivity extends Activity {
             stopPlayback();
             return;
         }
-        Intent i = new Intent(this, PlayerService.class);
-        i.setAction(PlayerService.ACTION_PLAY);
-        i.putExtra(PlayerService.EXTRA_ID, t.id);
-        i.putExtra(PlayerService.EXTRA_NAME, t.displayName());
-        i.putExtra(PlayerService.EXTRA_MODE, t.type);
-        i.putExtra(PlayerService.EXTRA_VALUE, t.value);
-        startForegroundService(i);
+        PlayerService.play(this, t);
     }
 
     private void stopPlayback() {
-        if (PlayerService.currentId == null) {
-            return;
-        }
-        Intent i = new Intent(this, PlayerService.class);
-        i.setAction(PlayerService.ACTION_STOP);
-        startService(i);
+        PlayerService.stop(this);
     }
 
     /** Startet die erste vorhandene App bzw. Webseite aus der |-getrennten Liste. */
@@ -812,7 +837,7 @@ public class MainActivity extends Activity {
                 if (isNew) {
                     tiles.add(tile);
                 }
-                TileStore.save(this, tiles);
+                saveTiles();
                 showIndex(tiles.indexOf(tile));
                 dialog.dismiss();
             });
@@ -915,7 +940,7 @@ public class MainActivity extends Activity {
             return;
         }
         Collections.swap(tiles, from, to);
-        TileStore.save(this, tiles);
+        saveTiles();
         showIndex(to);
         Toast.makeText(this, "Position " + (to + 1) + " von " + tiles.size(), Toast.LENGTH_SHORT).show();
     }
@@ -928,7 +953,7 @@ public class MainActivity extends Activity {
                         stopPlayback();
                     }
                     tiles.remove(tile);
-                    TileStore.save(this, tiles);
+                    saveTiles();
                     rebuildGrid();
                     editor.dismiss();
                 })
@@ -1039,7 +1064,7 @@ public class MainActivity extends Activity {
                     stopPlayback();
                     tiles.clear();
                     tiles.addAll(imported);
-                    TileStore.save(this, tiles);
+                    saveTiles();
                     page = 0;
                     rebuildGrid();
                     Toast.makeText(this, imported.size() + " Knöpfe geladen", Toast.LENGTH_LONG).show();

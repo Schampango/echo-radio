@@ -27,6 +27,20 @@ Frei konfigurierbare Senderknöpfe für den Amazon Echo Show 8 (1. Gen, *crown*)
 Alle Knöpfe sind gleich groß und sitzen in einem Raster. Die Spaltenzahl wählt die App selbst,
 sodass die Knöpfe möglichst groß werden.
 
+## Weboberfläche
+
+Die App startet auf dem Echo einen kleinen Webserver: **http://&lt;IP des Echo&gt;:8080**
+(die Adresse steht im Bearbeiten-Modus unten in der Statuszeile).
+
+- alle Knöpfe als Vorschau, anklicken zum Bearbeiten, ziehen zum Sortieren
+- Beschriftung, Art, Ziel, App-Auswahl, Farbe, Logo samt Logo-Suche
+- neue Knöpfe, löschen, Sicherung herunterladen/laden
+- Fernbedienung: ▶ abspielen, Stopp, Lautstärke, „läuft gerade“
+- Änderungen gehen sofort auf den Echo; wurde dort gleichzeitig etwas geändert,
+  meldet die Seite das, statt es zu überschreiben
+
+Ohne Passwort – nur für das Heimnetz gedacht.
+
 ## Editor
 
 | Feld | Bedeutung |
