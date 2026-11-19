@@ -1,128 +1,91 @@
 # Echo Radio
 
-Frei konfigurierbare Senderknöpfe für den Amazon Echo Show 8 (1. Gen, *crown*) mit LineageOS 18.1 (Android 11).
+**Internetradio mit großen Senderknöpfen, lokaler Sprachsteuerung und Weboberfläche –
+für den Amazon Echo Show 8 (1. Gen.) mit LineageOS.**
 
-## Bedienung
+Echo Radio macht aus einem entsperrten Echo Show 8 ein schlichtes, werbefreies Küchen- oder
+Wohnzimmerradio: Knopf antippen oder „Alexa, spiel Deutschlandfunk“ sagen, fertig.
+Ohne Amazon-Konto, ohne Cloud. Die Spracherkennung läuft vollständig auf dem Gerät.
 
-- **Tippen:** abspielen, nochmal tippen: stoppen. Der laufende Knopf bekommt einen gelben Ring.
-- **Bearbeiten** (unten): Knopf antippen öffnet den Editor, **+** legt einen neuen an, **Fertig** beendet.
-- **Langer Druck** auf einen Knopf öffnet den Editor jederzeit.
-- Kann als Startbildschirm (Home) gewählt werden.
-- Mehr Knöpfe als auf eine Seite passen (max. 12): Seiten zum Wischen, Punkte unten zeigen die Seite.
+📖 **[Installationsanleitung](docs/INSTALLATION.md)** · **[Bedienungsanleitung](docs/BEDIENUNGSANLEITUNG.md)**
 
-### Radio
+---
 
-- Bricht die Verbindung ab (WLAN-Aussetzer, Stream hängt > 20 s), verbindet die App automatisch neu:
-  nach 3, 5, 10, 20, dann alle 30 s, höchstens 20 Versuche. Kommt das WLAN zurück, sofort.
-- Schickt der Sender Titel und Interpret mit (ICY-Metadaten), stehen sie in der Statuszeile.
-- Abgespielt wird mit ExoPlayer (Media3); der läuft auch mit reinen AAC-Streams wie Brillux Radio.
-- Fehlersuche: `adb logcat -s EchoRadio:*`
+## Funktionen
 
-### Podcasts (Art „Neueste Folge aus Podcast-Feed“)
+**Radio und Podcasts**
+- Frei belegbare, runde Knöpfe mit Farbe oder Senderlogo; mehrere Seiten zum Wischen
+- Radio-Streams (auch reine AAC-Streams), Sendersuche per Name über radio-browser.info
+- „Neueste Folge“ aus Podcast-Feeds, z. B. aktuelle Nachrichten, mit Fortsetzen an der gemerkten Stelle
+  und Fortschrittsbalken
+- Knöpfe, die andere Apps oder Webseiten öffnen (z. B. Apple Music, NewPipe)
+- Interpret und Titel des laufenden Songs
+- Automatisches Neuverbinden bei WLAN-Aussetzern, sanfter Senderwechsel ohne Knacken
+- Equalizer mit Voreinstellungen
 
-- Beim Stoppen merkt sich die App Folge und Position (zusätzlich alle 5 Sekunden).
-- Beim nächsten Tipp geht es dort weiter, solange im Feed keine neuere Folge erschienen ist.
-  Eine neue Folge oder eine zu Ende gehörte beginnt von vorne.
-- Unten erscheint ein Fortschrittsbalken; ziehen zum Spulen.
+**Sprachsteuerung (offline)**
+- „Alexa, spiel …“, „Alexa, Stopp“, „Alexa, lauter/leiser“, „Alexa, Lautstärke 5“
+- Erkennung mit [Vosk](https://alphacephei.com/vosk/) direkt auf dem Echo, kein Internet nötig
+- Pulsierender roter Rand, solange zugehört wird, grün oder orange als Rückmeldung
+- Alle Wörter änderbar, auch das Aktivierungswort; tolerante Erkennung von Sendernamen
 
-Alle Knöpfe sind gleich groß und sitzen in einem Raster. Die Spaltenzahl wählt die App selbst,
-sodass die Knöpfe möglichst groß werden.
+**Display**
+- Bleibt an, dunkelt nach einstellbarer Zeit ab und zeigt dann eine Uhr mit Sender, Interpret und Titel
+- Aufwecken per Berührung oder Sprache
+- Läuft als Startbildschirm; holt sich auf Wunsch aus anderen Apps wieder nach vorne
 
-## Sprachsteuerung
+**Weboberfläche** (`http://<IP des Echo>:8080`)
+- Knöpfe anlegen, bearbeiten, per Drag & Drop sortieren, Logos suchen
+- Fernbedienung: abspielen, stoppen, Lautstärke
+- Sprachbefehle, Equalizer und Display einstellen
+- Sicherung herunterladen und wiederherstellen
 
-Läuft komplett auf dem Echo (Vosk, kleines deutsches Modell), ohne Internet und ohne Home Assistant.
-Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
+## Voraussetzungen
 
-- **„Alexa, …“** – nach „Alexa“ piept es kurz, die Musik wird leiser und ein **roter Rand**
-  pulsiert um das Display; danach kurz **grün** (verstanden) oder **orange** (nicht verstanden)
-- Rand auch über anderen Apps (Apple Music, YouTube):
-  `adb shell appops set de.polla.echoradio SYSTEM_ALERT_WINDOW allow`, dann 🎤 einmal aus- und einschalten
-- „Alexa, spiel DLF“ / „Alexa, Eins Live“ / „Alexa, Nachrichten“ – Name eines Knopfs
-- „Alexa, Stopp“, „Alexa, lauter“, „Alexa, leiser“, „Alexa, Lautstärke 5“
-- Auch mit Pause: „Alexa“ … *piep* … „Deutschlandfunk“
-- Weitere Namen pro Knopf in der Weboberfläche unter **Sprachbefehl**
-- Alle anderen Wörter (Aktivierungswort, Stopp, lauter, leiser, Lautstärke, Füllwörter) in der
-  Weboberfläche unter **🗣 Wörter**: anklicken zum Ändern, × zum Löschen, Enter zum Hinzufügen.
-  Dort steht auch, was zuletzt gehört wurde – praktisch zum Ausprobieren neuer Wörter.
-  Das Sprachmodell kennt nur normale deutsche Wörter; Fantasiewörter werden selten erkannt.
-- Ein/Aus: 🎤-Knopf oben in der Weboberfläche oder die Mikrofon-Taste am Echo
-- Mikrofon-Berechtigung fehlt? `adb shell pm grant de.polla.echoradio android.permission.RECORD_AUDIO`
-- Protokoll: `adb logcat -s EchoRadio:*` (zeigt „Gehört: …“)
+- Amazon Echo Show 8, **1. Generation (2019, „crown“)**, entsperrt, mit **LineageOS 18.1**.
+  Die Anleitung dazu steht in der [Installationsanleitung](docs/INSTALLATION.md).
+- Alternativ jedes Android-Gerät ab **Android 8** im Querformat
+- WLAN; einmalig ca. 45 MB Download für das Sprachmodell
 
-## Display
-
-- Solange die Radio-App vorne ist, geht das Display nicht aus, sondern wird nach einer
-  einstellbaren Zeit abgedunkelt (Standard: 60 s, Helligkeit 5 %, 0 % = schwarz).
-- Abgedunkelt erscheint eine **Uhr** mit Datum und dem, was gerade läuft
-  (Sender, Interpret, Titel); abschaltbar unter „Display“.
-- Antippen weckt auf (die erste Berührung startet keinen Sender), „Alexa“ weckt für den
-  Sprachbefehl auf und dunkelt danach nach etwa 8 Sekunden wieder ab.
-- Optional holt sich die App nach X Minuten aus anderen Apps wieder nach vorne
-  (zählt ab dem Wechsel in die andere App; braucht „Über anderen Apps einblenden“, s. o.).
-- Einstellen: am Echo unter „Bearbeiten“ → „Display“ oder in der Weboberfläche über „🖥 Display“.
-
-## Klang (Equalizer)
-
-- Unter „Bearbeiten“ → „Klang“: ein Regler pro Frequenzband (beim Echo meist 5 Bänder, ±15 dB),
-  Voreinstellungen des Geräts (z. B. Rock, Jazz, Pop) und „Alles auf 0“.
-- Änderungen sind sofort zu hören, „Speichern“ übernimmt sie dauerhaft, „Abbrechen“ stellt den alten Klang wieder her.
-- Auch in der Weboberfläche über „🎚 Klang“ (wird dort sofort gespeichert).
-- Gilt für alle Sender und Podcasts der Radio-App (nicht für andere Apps).
-
-## Weboberfläche
-
-Die App startet auf dem Echo einen kleinen Webserver: **http://&lt;IP des Echo&gt;:8080**
-(die Adresse steht im Bearbeiten-Modus unten in der Statuszeile).
-
-- alle Knöpfe als Vorschau, anklicken zum Bearbeiten, ziehen zum Sortieren
-- Beschriftung, Art, Ziel, App-Auswahl, Farbe, Logo samt Logo-Suche
-- neue Knöpfe, löschen, Sicherung herunterladen/laden
-- Fernbedienung: ▶ abspielen, Stopp, Lautstärke, „läuft gerade“
-- Änderungen gehen sofort auf den Echo; wurde dort gleichzeitig etwas geändert,
-  meldet die Seite das, statt es zu überschreiben
-
-Ohne Passwort – nur für das Heimnetz gedacht.
-
-## Editor
-
-| Feld | Bedeutung |
-|---|---|
-| Beschriftung | Text im Kreis, Enter für eine zweite Zeile |
-| Art | Radio-Stream · neueste Folge aus Podcast-Feed · Sender suchen (radio-browser.info) · App oder Webseite |
-| Ziel | Stream-/Feed-Adresse, Sendername oder Paketname (Liste über „App auswählen“). Bei Apps mehrere Ziele mit `\|` trennen, das erste vorhandene wird gestartet |
-| Farbe | 12 Vorgaben oder eigener Farbcode `#RRGGBB` |
-| Logo | Bildadresse (PNG/JPG), „Logo suchen“ bei radio-browser.info, „Vorschau“, „Entfernen“. SVG geht nicht |
-| Position | nach vorne / nach hinten |
-| Löschen | entfernt den Knopf |
-
-## Sichern und Wiederherstellen
-
-Im Bearbeiten-Modus: **Sichern** speichert alle Knöpfe als `echo-radio-knoepfe.json`
-(z. B. in *Downloads*), **Laden** liest eine solche Datei wieder ein und ersetzt die aktuellen Knöpfe.
-Vom PC aus: `adb pull /sdcard/Download/echo-radio-knoepfe.json`
-
-## Standardknöpfe
-
-| Knopf | Quelle |
-|---|---|
-| News | neueste Sendung aus `deutschlandfunk.de/nachrichten-108.xml` |
-| 1 Live | WDR 1LIVE Stream |
-| DLF | Deutschlandfunk Stream |
-| Brillux | Suche „Brillux Radio“ bei radio-browser.info |
-| Apple Musik | Apple-Music-App |
-| Youtube | NewPipe, sonst YouTube-App, sonst Browser |
-| Bundesliga Konferenz | WDR 2 Stream (Platzhalter) |
-
-## Bauen (Linux Mint / Ubuntu, als root)
+## Schnellstart
 
 ```bash
-./build.sh
-```
-
-Installiert beim ersten Mal Java 17 und das Android SDK nach `/opt/android-sdk`.
-
-## Installieren
-
-```bash
+git clone https://github.com/Schampango/echo-radio.git
+cd echo-radio
+./build.sh                                   # Linux Mint/Ubuntu, als root
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell pm grant de.polla.echoradio android.permission.RECORD_AUDIO
+adb shell appops set de.polla.echoradio SYSTEM_ALERT_WINDOW allow
+adb shell cmd package set-home-activity de.polla.echoradio/.MainActivity
+adb shell am start -n de.polla.echoradio/.MainActivity
 ```
+
+Die Erklärung zu jedem Schritt steht in der [Installationsanleitung](docs/INSTALLATION.md).
+
+## Technik
+
+| | |
+|---|---|
+| Sprache | Java, ohne UI-Framework (reine Android-Views) |
+| Android | minSdk 26, targetSdk 30, compileSdk 34 |
+| Wiedergabe | [Media3 ExoPlayer](https://developer.android.com/media/media3/exoplayer) 1.4 |
+| Spracherkennung | [Vosk](https://alphacephei.com/vosk/) 0.3.47 mit `vosk-model-small-de-0.15` (zur Laufzeit geladen) |
+| Senderdaten | [radio-browser.info](https://www.radio-browser.info) |
+| Weboberfläche | eingebauter HTTP-Server (Port 8080), eine HTML-Datei ohne externe Abhängigkeiten |
+
+Paketname: `de.polla.echoradio` · Protokoll: `adb logcat -s EchoRadio:*`
+
+## Hinweise
+
+- Dieses Projekt steht in keiner Verbindung zu Amazon. „Alexa“ und „Echo“ sind Marken von Amazon.
+  „Alexa“ wird hier nur als voreingestelltes, änderbares Aktivierungswort verwendet.
+- Das Entsperren des Echo ersetzt die Amazon-Software, beendet die Garantie und kann das Gerät
+  unbrauchbar machen. Du handelst auf eigene Gefahr.
+- Die Weboberfläche hat kein Passwort. Nutze sie nur im eigenen Heimnetz.
+
+## Dank
+
+- **R0rt1z2 (Rortiz2)** für amonet und das Entsperren der Echo-Geräte
+- **bengris32** für LineageOS auf dem Echo Show
+- **Alpha Cephei** für Vosk und die freien Sprachmodelle
+- **radio-browser.info** für das offene Senderverzeichnis
