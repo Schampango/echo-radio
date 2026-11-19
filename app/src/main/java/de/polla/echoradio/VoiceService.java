@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
+import android.graphics.PixelFormat;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
 import android.net.Uri;
@@ -17,7 +18,9 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
+import android.view.WindowManager;
 import android.widget.Toast;
 
 import org.json.JSONException;
@@ -63,6 +66,11 @@ public class VoiceService extends Service implements RecognitionListener {
     private static final int AWAIT_MS = 7000;
     private static final String LISTENING = "hört zu – sag „Alexa, …“";
 
+    /** Broadcast an die App: Rand anzeigen (Extra "mode", "overlay"). */
+    static final String ACTION_LISTENING = "de.polla.echoradio.LISTENING";
+    static final String EXTRA_MODE = "mode";
+    static final String EXTRA_OVERLAY = "overlay";
+
     /** Zustand fuer Weboberflaeche und App. */
     static volatile String state = "aus";
 
@@ -76,7 +84,9 @@ public class VoiceService extends Service implements RecognitionListener {
     /** "Alexa" wurde gehoert, der Befehl steht noch aus. */
     private boolean awaiting;
 
-    private final Runnable endAwait = this::finishCommand;
+    private final Runnable endAwait = () -> finishCommand(ListeningFrame.IDLE);
+    /** Rand ueber allen Apps (nur mit Berechtigung "Ueber anderen Apps einblenden"). */
+    private ListeningFrame overlay;
 
     // ---------------------------------------------------------------- Ein/Aus
 
@@ -145,6 +155,7 @@ public class VoiceService extends Service implements RecognitionListener {
         } catch (RuntimeException e) {
             tone = null;
         }
+        addOverlay();
         LibVosk.setLogLevel(LogLevel.WARNINGS);
         worker.execute(this::prepare);
     }
@@ -178,6 +189,15 @@ public class VoiceService extends Service implements RecognitionListener {
         if (tone != null) {
             tone.release();
         }
+        if (overlay != null) {
+            try {
+                getSystemService(WindowManager.class).removeView(overlay.view());
+            } catch (RuntimeException ignored) {
+                // war nicht angezeigt
+            }
+            overlay = null;
+        }
+        showFrame(ListeningFrame.IDLE);
         state = "aus";
         super.onDestroy();
     }
@@ -360,6 +380,7 @@ public class VoiceService extends Service implements RecognitionListener {
     private void startAwaiting() {
         awaiting = true;
         state = "🎤 hört …";
+        showFrame(ListeningFrame.LISTENING);
         PlayerService.duck(true);
         if (tone != null) {
             tone.startTone(ToneGenerator.TONE_PROP_BEEP, 150);
@@ -391,18 +412,18 @@ public class VoiceService extends Service implements RecognitionListener {
                 }
                 return;
             case STOP:
-                finishCommand();
+                finishCommand(ListeningFrame.OK);
                 PlayerService.stop(this);
                 toast("⏹ Stopp");
                 return;
             case VOLUME_UP:
             case VOLUME_DOWN:
             case SET_VOLUME:
-                finishCommand();
+                finishCommand(ListeningFrame.OK);
                 changeVolume(cmd);
                 return;
             case PLAY:
-                finishCommand();
+                finishCommand(ListeningFrame.OK);
                 Tile tile = find(tiles, cmd.target.id);
                 if (tile != null) {
                     start(tile);
@@ -410,20 +431,58 @@ public class VoiceService extends Service implements RecognitionListener {
                 return;
             default:
                 if (cmd.wakeHeard || (awaiting && !cmd.rest.isEmpty())) {
-                    finishCommand();
+                    finishCommand(ListeningFrame.FAILED);
                     toast("Nicht verstanden: „" + (cmd.rest.isEmpty() ? text : cmd.rest) + "“");
                 }
         }
     }
 
-    private void finishCommand() {
+    private void finishCommand(int result) {
         main.removeCallbacks(endAwait);
+        boolean wasAwaiting = awaiting;
         if (awaiting) {
             awaiting = false;
             PlayerService.duck(false);
         }
+        if (wasAwaiting || result != ListeningFrame.IDLE) {
+            showFrame(result);
+        }
         if (!destroyed && speech != null) {
             state = LISTENING;
+        }
+    }
+
+    /** Rand anzeigen: ueber allen Apps (falls erlaubt) und in der Radio-App. */
+    private void showFrame(int mode) {
+        if (overlay != null) {
+            overlay.show(mode);
+        }
+        Intent i = new Intent(ACTION_LISTENING);
+        i.setPackage(getPackageName());
+        i.putExtra(EXTRA_MODE, mode);
+        i.putExtra(EXTRA_OVERLAY, overlay != null);
+        sendBroadcast(i);
+    }
+
+    private void addOverlay() {
+        if (!Settings.canDrawOverlays(this)) {
+            return;
+        }
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        ListeningFrame frame = new ListeningFrame(this);
+        try {
+            getSystemService(WindowManager.class).addView(frame.view(), lp);
+            overlay = frame;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Rand über anderen Apps nicht möglich", e);
         }
     }
 

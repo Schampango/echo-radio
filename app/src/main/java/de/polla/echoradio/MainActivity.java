@@ -102,6 +102,7 @@ public class MainActivity extends Activity {
     private int pageCapacity = MAX_PER_PAGE;
 
     private SwipeFrame gridHolder;
+    private ListeningFrame listeningFrame;
     private TextView status;
     private TextView editButton;
     private TextView stopButton;
@@ -128,7 +129,12 @@ public class MainActivity extends Activity {
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (TileStore.ACTION_TILES_CHANGED.equals(intent.getAction())) {
+            if (VoiceService.ACTION_LISTENING.equals(intent.getAction())) {
+                // Liegt der Rand schon ueber allen Apps, nicht doppelt zeichnen
+                if (!intent.getBooleanExtra(VoiceService.EXTRA_OVERLAY, false) && listeningFrame != null) {
+                    listeningFrame.show(intent.getIntExtra(VoiceService.EXTRA_MODE, ListeningFrame.IDLE));
+                }
+            } else if (TileStore.ACTION_TILES_CHANGED.equals(intent.getAction())) {
                 // In der Weboberflaeche geaendert
                 reloadTiles();
             } else {
@@ -172,6 +178,7 @@ public class MainActivity extends Activity {
         super.onStart();
         IntentFilter filter = new IntentFilter(PlayerService.ACTION_STATE);
         filter.addAction(TileStore.ACTION_TILES_CHANGED);
+        filter.addAction(VoiceService.ACTION_LISTENING);
         registerReceiver(stateReceiver, filter);
         // Waehrend die App im Hintergrund war, kann im Browser etwas geaendert worden sein
         if (TileStore.revision(this) != knownRevision) {
@@ -306,7 +313,15 @@ public class MainActivity extends Activity {
 
         // Feste Hoehe, damit die Knoepfe nicht springen, wenn der Balken erscheint
         root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(96)));
-        setContentView(root);
+
+        // Rand fuer die Sprachsteuerung liegt ueber allem
+        FrameLayout outer = new FrameLayout(this);
+        outer.addView(root, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        listeningFrame = new ListeningFrame(this);
+        outer.addView(listeningFrame.view(), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(outer);
         updateBarButtons();
     }
 

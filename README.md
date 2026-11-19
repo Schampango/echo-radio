@@ -33,7 +33,10 @@ sodass die Knöpfe möglichst groß werden.
 Läuft komplett auf dem Echo (Vosk, kleines deutsches Modell), ohne Internet und ohne Home Assistant.
 Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
 
-- **„Alexa, …“** – nach „Alexa“ piept es kurz und die Musik wird leiser
+- **„Alexa, …“** – nach „Alexa“ piept es kurz, die Musik wird leiser und ein **roter Rand**
+  pulsiert um das Display; danach kurz **grün** (verstanden) oder **orange** (nicht verstanden)
+- Rand auch über anderen Apps (Apple Music, YouTube):
+  `adb shell appops set de.polla.echoradio SYSTEM_ALERT_WINDOW allow`, dann 🎤 einmal aus- und einschalten
 - „Alexa, spiel DLF“ / „Alexa, Eins Live“ / „Alexa, Nachrichten“ – Name eines Knopfs
 - „Alexa, Stopp“, „Alexa, lauter“, „Alexa, leiser“, „Alexa, Lautstärke 5“
 - Auch mit Pause: „Alexa“ … *piep* … „Deutschlandfunk“
