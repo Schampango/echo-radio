@@ -37,8 +37,15 @@ Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
   pulsiert um das Display; danach kurz **grün** (verstanden) oder **orange** (nicht verstanden)
 - Rand auch über anderen Apps (Apple Music, YouTube):
   `adb shell appops set de.polla.echoradio SYSTEM_ALERT_WINDOW allow`, dann 🎤 einmal aus- und einschalten
+- „Alexa, spiel DLF“ / „Alexa, Eins Live“ / „Alexa, Nachrichten“ – Name eines Knopfs
+- „Alexa, Stopp“, „Alexa, lauter“, „Alexa, leiser“, „Alexa, Lautstärke 5“
+- Auch mit Pause: „Alexa“ … *piep* … „Deutschlandfunk“
+- Weitere Namen pro Knopf in der Weboberfläche unter **Sprachbefehl**
+- Ein/Aus: 🎤-Knopf oben in der Weboberfläche oder die Mikrofon-Taste am Echo
+- Mikrofon-Berechtigung fehlt? `adb shell pm grant de.polla.echoradio android.permission.RECORD_AUDIO`
+- Protokoll: `adb logcat -s EchoRadio:*` (zeigt „Gehört: …“)
 
-### Display
+## Display
 
 - Solange die Radio-App vorne ist, geht das Display nicht aus, sondern wird nach einer
   einstellbaren Zeit abgedunkelt (Standard: 60 s, Helligkeit 5 %, 0 % = schwarz).
@@ -47,13 +54,6 @@ Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
 - Optional holt sich die App nach X Minuten aus anderen Apps wieder nach vorne
   (zählt ab dem Wechsel in die andere App; braucht „Über anderen Apps einblenden“, s. o.).
 - Einstellen: am Echo unter „Bearbeiten“ → „Display“ oder in der Weboberfläche über „🖥 Display“.
-- „Alexa, spiel DLF“ / „Alexa, Eins Live“ / „Alexa, Nachrichten“ – Name eines Knopfs
-- „Alexa, Stopp“, „Alexa, lauter“, „Alexa, leiser“, „Alexa, Lautstärke 5“
-- Auch mit Pause: „Alexa“ … *piep* … „Deutschlandfunk“
-- Weitere Namen pro Knopf in der Weboberfläche unter **Sprachbefehl**
-- Ein/Aus: 🎤-Knopf oben in der Weboberfläche oder die Mikrofon-Taste am Echo
-- Mikrofon-Berechtigung fehlt? `adb shell pm grant de.polla.echoradio android.permission.RECORD_AUDIO`
-- Protokoll: `adb logcat -s EchoRadio:*` (zeigt „Gehört: …“)
 
 ## Weboberfläche
 
