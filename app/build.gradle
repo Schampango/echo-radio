@@ -11,8 +11,8 @@ android {
         minSdk 26
         // Der Echo Show laeuft mit LineageOS 18.1 = Android 11 (API 30)
         targetSdk 30
-        versionCode 5
-        versionName '1.4'
+        versionCode 6
+        versionName '1.4.1'
     }
 
     buildTypes {

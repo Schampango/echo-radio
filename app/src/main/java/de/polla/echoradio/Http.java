@@ -93,4 +93,39 @@ final class Http {
         }
         throw new IOException("zu viele Weiterleitungen");
     }
+
+    /**
+     * Folgt den Weiterleitungen einer Stream-Adresse (z. B. Lastverteiler) und liefert
+     * die endgueltige Adresse. Bei Fehlern wird die urspruengliche Adresse zurueckgegeben,
+     * nur ein eindeutiger Fehlerstatus des Servers wird weitergereicht.
+     */
+    static String finalUrl(String address) throws IOException {
+        String current = address;
+        for (int hop = 0; hop < 5; hop++) {
+            HttpURLConnection c;
+            int code;
+            try {
+                c = (HttpURLConnection) new URL(current).openConnection();
+                c.setConnectTimeout(10000);
+                c.setReadTimeout(10000);
+                c.setInstanceFollowRedirects(false);
+                c.setRequestProperty("User-Agent", USER_AGENT);
+                code = c.getResponseCode();
+            } catch (IOException e) {
+                // z. B. alter SHOUTcast-Server ("ICY 200 OK"): dem Player selbst ueberlassen
+                return current;
+            }
+            String location = c.getHeaderField("Location");
+            c.disconnect();
+            if (code >= 300 && code < 400 && location != null) {
+                current = new URL(new URL(current), location).toString();
+                continue;
+            }
+            if (code == 404 || code == 410) {
+                throw new StatusException(code);
+            }
+            return current;
+        }
+        return current;
+    }
 }

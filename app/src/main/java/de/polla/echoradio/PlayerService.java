@@ -586,10 +586,13 @@ public class PlayerService extends Service {
             }
             return m.group(1).replace("&amp;", "&");
         }
+        String stream = value;
         if (Tile.SEARCH.equals(mode) && !value.startsWith("http")) {
-            return RadioBrowser.findStreamUrl(value);
+            stream = RadioBrowser.findStreamUrl(value);
         }
-        return value;
+        // Weiterleitungen (z. B. Lastverteiler) selbst aufloesen; der Android-Player
+        // kommt damit nicht immer zurecht
+        return Http.finalUrl(stream);
     }
 
     /** Fehler, bei denen ein Neuversuch nichts bringt. */
