@@ -70,6 +70,10 @@ public class PlayerService extends Service {
     /** Wartezeiten zwischen den Neuversuchen in Sekunden; danach immer der letzte Wert. */
     private static final int[] RETRY_DELAYS_S = {3, 5, 10, 20, 30};
     private static final int MAX_RETRIES = 20;
+    /** Aus- und Einblenden beim Senderwechsel. */
+    private static final int FADE_OUT_MS = 200;
+    private static final int FADE_IN_MS = 300;
+    private static final int FADE_STEPS = 10;
 
     /** Laufende Instanz, nur fuer progress(). Zugriff nur im Haupt-Thread. */
     private static PlayerService instance;
@@ -163,7 +167,7 @@ public class PlayerService extends Service {
         cancelTimers();
         token++;
         prepared = false;
-        releasePlayer();
+        releasePlayer(false);
         if (networkCallback != null) {
             try {
                 connectivity.unregisterNetworkCallback(networkCallback);
@@ -288,6 +292,8 @@ public class PlayerService extends Service {
                 .build(), false);
         // Haelt CPU und WLAN wach, solange gespielt wird
         p.setWakeMode(C.WAKE_MODE_NETWORK);
+        // Leise starten, eingeblendet wird beim Start (verhindert Knacken beim Senderwechsel)
+        p.setVolume(0f);
         p.addListener(new Player.Listener() {
             private boolean started;
 
@@ -371,6 +377,7 @@ public class PlayerService extends Service {
     /** Der Player ist zum ersten Mal bereit. */
     private void onStarted(ExoPlayer p, int resumeAt, boolean podcast, String url) {
         prepared = true;
+        fadeIn(p);
         boolean reconnected = retryCount > 0;
         everPlayed = true;
         retryCount = 0;
@@ -532,6 +539,14 @@ public class PlayerService extends Service {
     }
 
     private void releasePlayer() {
+        releasePlayer(true);
+    }
+
+    /**
+     * Gibt den Player frei. Laeuft gerade etwas, wird erst kurz ausgeblendet:
+     * ein hartes Abschalten mitten im Ton erzeugt ein lautes Knacken.
+     */
+    private void releasePlayer(boolean fade) {
         if (icyFallback != null) {
             main.removeCallbacks(icyFallback);
             icyFallback = null;
@@ -541,8 +556,40 @@ public class PlayerService extends Service {
             icy = null;
         }
         if (player != null) {
-            player.release();
+            ExoPlayer old = player;
             player = null;
+            if (fade && old.isPlaying()) {
+                fadeOutAndRelease(old);
+            } else {
+                old.release();
+            }
+        }
+    }
+
+    private void fadeOutAndRelease(ExoPlayer old) {
+        float start = old.getVolume();
+        for (int i = 1; i <= FADE_STEPS; i++) {
+            final float volume = start * (1f - i / (float) FADE_STEPS);
+            final boolean last = i == FADE_STEPS;
+            main.postDelayed(() -> {
+                old.setVolume(Math.max(0f, volume));
+                if (last) {
+                    old.stop();
+                    old.release();
+                }
+            }, (long) i * FADE_OUT_MS / FADE_STEPS);
+        }
+    }
+
+    /** Blendet den neuen Sender sanft ein. */
+    private void fadeIn(ExoPlayer p) {
+        for (int i = 1; i <= FADE_STEPS; i++) {
+            final float volume = i / (float) FADE_STEPS;
+            main.postDelayed(() -> {
+                if (player == p) {
+                    p.setVolume(volume);
+                }
+            }, (long) i * FADE_IN_MS / FADE_STEPS);
         }
     }
 
