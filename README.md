@@ -41,6 +41,10 @@ Das Modell (ca. 45 MB) lädt die App beim ersten Start einmal herunter.
 - „Alexa, Stopp“, „Alexa, lauter“, „Alexa, leiser“, „Alexa, Lautstärke 5“
 - Auch mit Pause: „Alexa“ … *piep* … „Deutschlandfunk“
 - Weitere Namen pro Knopf in der Weboberfläche unter **Sprachbefehl**
+- Alle anderen Wörter (Aktivierungswort, Stopp, lauter, leiser, Lautstärke, Füllwörter) in der
+  Weboberfläche unter **🗣 Wörter**: anklicken zum Ändern, × zum Löschen, Enter zum Hinzufügen.
+  Dort steht auch, was zuletzt gehört wurde – praktisch zum Ausprobieren neuer Wörter.
+  Das Sprachmodell kennt nur normale deutsche Wörter; Fantasiewörter werden selten erkannt.
 - Ein/Aus: 🎤-Knopf oben in der Weboberfläche oder die Mikrofon-Taste am Echo
 - Mikrofon-Berechtigung fehlt? `adb shell pm grant de.polla.echoradio android.permission.RECORD_AUDIO`
 - Protokoll: `adb logcat -s EchoRadio:*` (zeigt „Gehört: …“)

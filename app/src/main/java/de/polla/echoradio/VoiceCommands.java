@@ -53,16 +53,65 @@ final class VoiceCommands {
         }
     }
 
-    static final String WAKE_WORD = "alexa";
-    private static final double WAKE_SIMILARITY = 0.75;
-    private static final double MATCH_THRESHOLD = 0.62;
+    /** Die Woerter, auf die reagiert wird (in der Weboberflaeche aenderbar). */
+    static final class Words {
+        final List<String> wake;
+        final List<String> stop;
+        final List<String> louder;
+        final List<String> quieter;
+        final List<String> volume;
+        final Set<String> fillers;
 
-    private static final Set<String> FILLERS = new HashSet<>(Arrays.asList(
+        Words(List<String> wake, List<String> stop, List<String> louder, List<String> quieter,
+              List<String> volume, List<String> fillers) {
+            this.wake = clean(wake, DEFAULT_WAKE);
+            this.stop = clean(stop, DEFAULT_STOP);
+            this.louder = clean(louder, DEFAULT_LOUDER);
+            this.quieter = clean(quieter, DEFAULT_QUIETER);
+            this.volume = clean(volume, DEFAULT_VOLUME);
+            // Fuellwoerter duerfen leer sein
+            Set<String> f = new HashSet<>();
+            for (String w : fillers) {
+                f.addAll(tokens(w));
+            }
+            this.fillers = f;
+        }
+
+        static Words defaults() {
+            return new Words(DEFAULT_WAKE, DEFAULT_STOP, DEFAULT_LOUDER, DEFAULT_QUIETER,
+                    DEFAULT_VOLUME, DEFAULT_FILLERS);
+        }
+
+        /** Kleinbuchstaben, ohne Satzzeichen, ohne Doppelte; leer -> Standard. */
+        private static List<String> clean(List<String> in, List<String> fallback) {
+            List<String> out = new ArrayList<>();
+            for (String w : in) {
+                String t = String.join(" ", tokens(w));
+                if (!t.isEmpty() && !out.contains(t)) {
+                    out.add(t);
+                }
+            }
+            return out.isEmpty() ? new ArrayList<>(fallback) : out;
+        }
+    }
+
+    static final List<String> DEFAULT_WAKE = Arrays.asList("alexa");
+    static final List<String> DEFAULT_STOP = Arrays.asList(
+            "stopp", "stop", "stoppe", "stoppen", "aus", "pause", "ruhe", "halt", "beenden", "beende");
+    static final List<String> DEFAULT_LOUDER = Arrays.asList("lauter");
+    static final List<String> DEFAULT_QUIETER = Arrays.asList("leiser");
+    static final List<String> DEFAULT_VOLUME = Arrays.asList("lautstärke");
+    static final List<String> DEFAULT_FILLERS = Arrays.asList(
             "bitte", "mal", "doch", "jetzt", "spiel", "spiele", "spielt", "spieler", "starte", "start",
             "mach", "mache", "öffne", "oeffne", "hör", "höre", "hoer", "hoere", "den", "die", "das",
-            "dem", "der", "sender", "auf", "an"));
-    private static final Set<String> STOP_WORDS = new HashSet<>(Arrays.asList(
-            "stopp", "stop", "stoppe", "stoppen", "aus", "pause", "ruhe", "halt", "beenden", "beende"));
+            "dem", "der", "sender", "auf", "an");
+
+    /** Aktuelle Woerter; wird beim Speichern ersetzt. */
+    static volatile Words words = Words.defaults();
+
+    private static final double WAKE_SIMILARITY = 0.75;
+    private static final double WORD_SIMILARITY = 0.8;
+    private static final double MATCH_THRESHOLD = 0.62;
     private static final Map<String, Integer> NUMBERS = new HashMap<>();
 
     static {
@@ -99,7 +148,8 @@ final class VoiceCommands {
             return new Command(Kind.NONE, null, 0, false, "");
         }
         List<String> rest = new ArrayList<>(wakeHeard ? tokens.subList(wake[0] + wake[1], tokens.size()) : tokens);
-        while (!rest.isEmpty() && FILLERS.contains(rest.get(0))) {
+        Words w = words;
+        while (!rest.isEmpty() && w.fillers.contains(rest.get(0))) {
             rest.remove(0);
         }
         String restText = String.join(" ", rest);
@@ -108,8 +158,9 @@ final class VoiceCommands {
         }
 
         // Lautstaerke 1..10
-        if (similarity(rest.get(0), "lautstärke") >= 0.7) {
-            for (int i = 1; i < rest.size(); i++) {
+        int volumeLen = startsWithPhrase(rest, w.volume, 0.7);
+        if (volumeLen > 0) {
+            for (int i = volumeLen; i < rest.size(); i++) {
                 Integer n = NUMBERS.get(rest.get(i));
                 if (n == null) {
                     n = parseIntOrNull(rest.get(i));
@@ -119,17 +170,15 @@ final class VoiceCommands {
                 }
             }
         }
-        if (rest.size() <= 3) {
-            for (String t : rest) {
-                if (STOP_WORDS.contains(t)) {
-                    return new Command(Kind.STOP, null, 0, wakeHeard, restText);
-                }
-                if (similarity(t, "lauter") >= 0.8) {
-                    return new Command(Kind.VOLUME_UP, null, 0, wakeHeard, restText);
-                }
-                if (similarity(t, "leiser") >= 0.8) {
-                    return new Command(Kind.VOLUME_DOWN, null, 0, wakeHeard, restText);
-                }
+        if (rest.size() <= 4) {
+            if (containsPhrase(rest, w.stop, WORD_SIMILARITY)) {
+                return new Command(Kind.STOP, null, 0, wakeHeard, restText);
+            }
+            if (containsPhrase(rest, w.louder, WORD_SIMILARITY)) {
+                return new Command(Kind.VOLUME_UP, null, 0, wakeHeard, restText);
+            }
+            if (containsPhrase(rest, w.quieter, WORD_SIMILARITY)) {
+                return new Command(Kind.VOLUME_DOWN, null, 0, wakeHeard, restText);
             }
         }
 
@@ -211,20 +260,62 @@ final class VoiceCommands {
 
     /** {Position, Anzahl Woerter} des Aktivierungsworts, oder {-1, 0}. */
     private static int[] findWake(List<String> tokens) {
+        List<String> wakeWords = words.wake;
         for (int i = 0; i < tokens.size(); i++) {
-            double single = similarity(tokens.get(i), WAKE_WORD);
-            // Zuerst zwei Woerter zusammen pruefen ("alex a" -> "alexa")
-            if (i + 1 < tokens.size()) {
-                double pair = similarity(tokens.get(i) + tokens.get(i + 1), WAKE_WORD);
-                if (pair >= 0.8 && pair > single) {
-                    return new int[]{i, 2};
+            for (String wake : wakeWords) {
+                String target = wake.replace(" ", "");
+                int n = wake.split(" ").length;
+                // Gesagtes ueber n Woerter zusammengefasst
+                if (i + n <= tokens.size()) {
+                    double single = similarity(String.join("", tokens.subList(i, i + n)), target);
+                    // Auch ein Wort mehr pruefen ("alex a" -> "alexa")
+                    if (i + n < tokens.size()) {
+                        double pair = similarity(String.join("", tokens.subList(i, i + n + 1)), target);
+                        if (pair >= 0.8 && pair > single) {
+                            return new int[]{i, n + 1};
+                        }
+                    }
+                    if (single >= WAKE_SIMILARITY) {
+                        return new int[]{i, n};
+                    }
                 }
-            }
-            if (single >= WAKE_SIMILARITY) {
-                return new int[]{i, 1};
             }
         }
         return new int[]{-1, 0};
+    }
+
+    /** Kommt einer der Begriffe (auch aus mehreren Woertern) irgendwo im Gesagten vor? */
+    static boolean containsPhrase(List<String> said, List<String> phrases, double threshold) {
+        for (String phrase : phrases) {
+            List<String> p = tokens(phrase);
+            if (p.isEmpty()) {
+                continue;
+            }
+            String target = String.join(" ", p);
+            for (int i = 0; i + p.size() <= said.size(); i++) {
+                String window = String.join(" ", said.subList(i, i + p.size()));
+                // Kurze Woerter ("aus") muessen genau passen
+                double needed = target.length() <= 4 ? 1.0 : threshold;
+                if (similarity(window, target) >= needed) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Laenge des Begriffs, mit dem das Gesagte beginnt, oder 0. */
+    private static int startsWithPhrase(List<String> said, List<String> phrases, double threshold) {
+        for (String phrase : phrases) {
+            List<String> p = tokens(phrase);
+            if (p.isEmpty() || p.size() > said.size()) {
+                continue;
+            }
+            if (similarity(String.join(" ", said.subList(0, p.size())), String.join(" ", p)) >= threshold) {
+                return p.size();
+            }
+        }
+        return 0;
     }
 
     /** 1 - Levenshtein-Abstand / Laenge des laengeren Worts. */

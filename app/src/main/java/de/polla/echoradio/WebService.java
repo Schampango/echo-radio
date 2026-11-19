@@ -33,6 +33,7 @@ public class WebService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        VoiceWords.load(this);
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(
                 new NotificationChannel(CHANNEL, "Weboberfläche", NotificationManager.IMPORTANCE_MIN));

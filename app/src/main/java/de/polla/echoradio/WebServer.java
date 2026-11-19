@@ -337,6 +337,23 @@ final class WebServer implements Runnable {
                     return json(200, Eq.toJson(context));
                 }
                 break;
+            case "/api/words":
+                if ("GET".equals(m)) {
+                    return words();
+                }
+                if ("PUT".equals(m) || "POST".equals(m)) {
+                    try {
+                        VoiceWords.save(context, new JSONObject(req.bodyText()));
+                    } catch (JSONException e) {
+                        return json(400, error("Ungültige Daten: " + e.getMessage()));
+                    }
+                    return words();
+                }
+                if ("DELETE".equals(m)) {
+                    VoiceWords.reset(context);
+                    return words();
+                }
+                break;
             case "/api/apps":
                 if ("GET".equals(m)) {
                     return json(200, new JSONObject().put("apps", apps()));
@@ -393,6 +410,12 @@ final class WebServer implements Runnable {
         return json(200, new JSONObject().put("revision", revision));
     }
 
+    private Response words() throws JSONException {
+        return json(200, new JSONObject()
+                .put("words", VoiceWords.toJson(VoiceCommands.words))
+                .put("defaults", VoiceWords.toJson(VoiceCommands.Words.defaults())));
+    }
+
     private JSONObject status() throws JSONException {
         JSONObject o = new JSONObject();
         String id = PlayerService.currentId;
@@ -402,7 +425,8 @@ final class WebServer implements Runnable {
         o.put("revision", TileStore.revision(context));
         o.put("voice", new JSONObject()
                 .put("enabled", VoiceService.isEnabled(context))
-                .put("state", VoiceService.state));
+                .put("state", VoiceService.state)
+                .put("heard", VoiceService.lastHeard));
         return o;
     }
 

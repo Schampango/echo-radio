@@ -95,6 +95,21 @@
   .eq-band { display: grid; grid-template-columns: 70px 220px 64px; align-items: center; gap: 8px; }
   .eq-band .val { text-align: right; font-variant-numeric: tabular-nums; }
   .eq-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; width: 100%; }
+  .words { display: grid; gap: 14px; width: 100%; }
+  .wgroup { display: grid; grid-template-columns: 230px 1fr; gap: 12px; align-items: start;
+    border-top: 1px solid var(--line); padding-top: 12px; }
+  .wgroup .title { font-weight: 600; }
+  .wgroup .title .note { font-weight: 400; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 2px; background: #eef8fd; border: 1px solid #cde9f6;
+    border-radius: 999px; padding: 3px 4px 3px 11px; }
+  .chip .t { cursor: text; }
+  .chip button { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 15px; padding: 0 6px; border-radius: 50%; }
+  .chip button:hover { color: var(--danger); }
+  .chip input, .chips .add { border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; font: inherit; width: 150px; }
+  .heard { background: #f7f9fb; border-radius: 8px; padding: 8px 12px; width: 100%; }
+  @media (max-width: 700px) { .wgroup { grid-template-columns: 1fr; } }
+  #wordsBtn.open { border-color: var(--blue); color: var(--blue); }
   #eqBtn.open { border-color: var(--blue); color: var(--blue); }
   #displayBtn.open { border-color: var(--blue); color: var(--blue); }
 </style>
@@ -105,6 +120,7 @@
   <div class="brand">Echo Radio</div>
   <div class="now"><span class="dot" id="nowDot"></span><span id="nowText">Verbinde …</span></div>
   <button class="btn small" id="voiceBtn" title="Sprachsteuerung">🎤 …</button>
+  <button class="btn small" id="wordsBtn" title="Befehlswörter der Sprachsteuerung">🗣 Wörter</button>
   <button class="btn small" id="eqBtn" title="Equalizer">🎚 Klang</button>
   <button class="btn small" id="displayBtn" title="Display-Einstellungen">🖥 Display</button>
   <div class="vol">🔊 <input type="range" id="volume" min="0" max="100" value="0"> <span id="volText">–</span></div>
@@ -114,6 +130,20 @@
 <div class="banner hidden" id="banner">
   <span id="bannerText"></span>
   <button class="btn small" id="reloadBtn">Neu laden</button>
+</div>
+
+<div class="settings hidden" id="wordsPanel">
+  <div class="panel">
+    <h2>Wörter der Sprachsteuerung</h2>
+    <div class="eq-row">
+      <span class="note" style="margin:0">Wort anklicken zum Ändern, × zum Löschen, ins Feld tippen und Enter zum Hinzufügen.
+        Die Namen der Sender stellst du beim jeweiligen Knopf unter „Sprachbefehl“ ein.</span>
+      <span class="save-state" id="wordsState"></span>
+    </div>
+    <div class="heard" id="heard">Zuletzt gehört: –</div>
+    <div class="words" id="wordGroups"></div>
+    <div class="eq-row"><button class="btn small" id="wordsReset">Alles auf Standard zurücksetzen</button></div>
+  </div>
 </div>
 
 <div class="settings hidden" id="eqPanel">
@@ -671,6 +701,7 @@ async function poll() {
       vb.className = "btn small " + (d.voice.enabled ? "on" : "off");
       vb.title = "Sprachsteuerung: " + d.voice.state + " – klicken zum " + (d.voice.enabled ? "Ausschalten" : "Einschalten");
       vb.dataset.enabled = d.voice.enabled ? "1" : "0";
+      $("heard").textContent = "Zuletzt gehört: " + (d.voice.heard || "–");
     }
     if (!volDragging) {
       $("volume").value = d.volume;
@@ -804,6 +835,141 @@ $("dimSeconds").addEventListener("change", saveSettings);
 $("returnMinutes").addEventListener("change", saveSettings);
 $("dimLevel").addEventListener("input", () => { $("dimLevelText").textContent = levelName($("dimLevel").value); });
 $("dimLevel").addEventListener("change", saveSettings);
+
+// ------------------------------------------------------------ Woerter der Sprachsteuerung
+
+const WORD_GROUPS = [
+  { key: "wake", title: "Aktivierungswort", note: "statt bzw. zusätzlich zu „Alexa“ – am besten lang und selten, z. B. „Computer“" },
+  { key: "stop", title: "Stopp", note: "beendet die Wiedergabe" },
+  { key: "louder", title: "Lauter", note: "eine Stufe lauter" },
+  { key: "quieter", title: "Leiser", note: "eine Stufe leiser" },
+  { key: "volume", title: "Lautstärke", note: "danach eine Zahl 1–10, z. B. „Lautstärke 5“" },
+  { key: "fillers", title: "Füllwörter", note: "werden am Anfang überhört, z. B. „spiel“, „bitte“", optional: true },
+];
+let words = null;
+let wordsTimer = null;
+
+function normWord(w) {
+  return w.toLowerCase().replace(/[^a-z0-9äöüß]+/g, " ").trim();
+}
+
+function setWordsState(text, err) {
+  const st = $("wordsState");
+  st.className = "save-state" + (err ? " err" : "");
+  st.textContent = text;
+}
+
+function renderWords() {
+  const box = $("wordGroups");
+  if (!words) { box.replaceChildren(); return; }
+  box.replaceChildren(...WORD_GROUPS.map((g) => {
+    const list = words[g.key];
+    const chips = el("div", { class: "chips" });
+    list.forEach((w, i) => {
+      const t = el("span", { class: "t", text: w, title: "Klicken zum Ändern" });
+      const del = el("button", { text: "×", title: "Löschen" });
+      const chip = el("span", { class: "chip" }, [t, del]);
+      del.addEventListener("click", () => {
+        if (!g.optional && list.length === 1) {
+          setWordsState("Mindestens ein Wort muss bleiben – erst ein neues hinzufügen.", true);
+          return;
+        }
+        list.splice(i, 1);
+        renderWords();
+        scheduleWordsSave();
+      });
+      t.addEventListener("click", () => {
+        const inp = el("input", { type: "text", value: w });
+        let done = false;
+        const commit = () => {
+          if (done) return;
+          done = true;
+          const v = normWord(inp.value);
+          if (!v) {
+            if (!g.optional && list.length === 1) { setWordsState("Mindestens ein Wort muss bleiben.", true); }
+            else list.splice(i, 1);
+          } else if (v !== w && list.includes(v)) {
+            list.splice(i, 1);
+          } else {
+            list[i] = v;
+          }
+          renderWords();
+          scheduleWordsSave();
+        };
+        inp.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter") commit();
+          if (ev.key === "Escape") { done = true; renderWords(); }
+        });
+        inp.addEventListener("blur", commit);
+        chip.replaceChildren(inp);
+        inp.focus();
+        inp.select();
+      });
+      chips.append(chip);
+    });
+    const add = el("input", { type: "text", class: "add", placeholder: "+ hinzufügen" });
+    add.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      const v = normWord(add.value);
+      if (!v) return;
+      if (!list.includes(v)) list.push(v);
+      renderWords();
+      scheduleWordsSave();
+      const again = document.querySelector('.wgroup[data-key="' + g.key + '"] .add');
+      if (again) again.focus();
+    });
+    chips.append(add);
+    const head = el("div", { class: "title" }, [el("div", { text: g.title }), el("div", { class: "note", text: g.note })]);
+    const row = el("div", { class: "wgroup" }, [head, chips]);
+    row.dataset.key = g.key;
+    return row;
+  }));
+}
+
+async function loadWords() {
+  try {
+    words = (await api("GET", "/api/words")).words;
+    setWordsState("");
+  } catch (e) {
+    words = null;
+    setWordsState("Konnte nicht laden: " + e.message, true);
+  }
+  renderWords();
+}
+
+function scheduleWordsSave() {
+  clearTimeout(wordsTimer);
+  setWordsState("Speichert …");
+  wordsTimer = setTimeout(saveWords, 300);
+}
+
+async function saveWords() {
+  wordsTimer = null;
+  try {
+    // Lokale Liste behalten: offene Eingabefelder arbeiten auf genau diesen Arrays
+    await api("PUT", "/api/words", words);
+    setWordsState("✓ Gespeichert");
+  } catch (e) {
+    setWordsState("Fehler: " + e.message, true);
+  }
+}
+
+$("wordsBtn").addEventListener("click", () => {
+  const box = $("wordsPanel");
+  box.classList.toggle("hidden");
+  $("wordsBtn").classList.toggle("open", !box.classList.contains("hidden"));
+  if (!box.classList.contains("hidden")) loadWords();
+});
+$("wordsReset").addEventListener("click", async () => {
+  if (!confirm("Alle Befehlswörter auf den Standard zurücksetzen?")) return;
+  try {
+    words = (await api("DELETE", "/api/words")).words;
+    setWordsState("✓ Zurückgesetzt");
+  } catch (e) {
+    setWordsState("Fehler: " + e.message, true);
+  }
+  renderWords();
+});
 
 // ------------------------------------------------------------ Equalizer
 

@@ -73,6 +73,8 @@ public class VoiceService extends Service implements RecognitionListener {
 
     /** Zustand fuer Weboberflaeche und App. */
     static volatile String state = "aus";
+    /** Zuletzt gehoerter Befehl, fuer die Weboberflaeche. */
+    static volatile String lastHeard = "";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -134,6 +136,7 @@ public class VoiceService extends Service implements RecognitionListener {
     @Override
     public void onCreate() {
         super.onCreate();
+        VoiceWords.load(this);
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(
                 new NotificationChannel(CHANNEL, "Sprachsteuerung", NotificationManager.IMPORTANCE_MIN));
@@ -389,6 +392,30 @@ public class VoiceService extends Service implements RecognitionListener {
         main.postDelayed(endAwait, AWAIT_MS);
     }
 
+    private static String describe(VoiceCommands.Command cmd, List<Tile> tiles) {
+        switch (cmd.kind) {
+            case WAKE_ONLY:
+                return "hört zu";
+            case STOP:
+                return "Stopp";
+            case VOLUME_UP:
+                return "lauter";
+            case VOLUME_DOWN:
+                return "leiser";
+            case SET_VOLUME:
+                return "Lautstärke " + cmd.level;
+            case PLAY:
+                for (Tile t : tiles) {
+                    if (t.id.equals(cmd.target.id)) {
+                        return "spielt " + t.label.replace('\n', ' ');
+                    }
+                }
+                return "spielt";
+            default:
+                return "nicht verstanden";
+        }
+    }
+
     private void handle(String text) {
         if (text.isEmpty()) {
             return;
@@ -401,6 +428,9 @@ public class VoiceService extends Service implements RecognitionListener {
         VoiceCommands.Command cmd = VoiceCommands.parse(text, targets, awaiting);
         if (cmd.kind != VoiceCommands.Kind.NONE || cmd.wakeHeard) {
             Log.i(TAG, "Gehört: „" + text + "“ -> " + cmd);
+        }
+        if (cmd.kind != VoiceCommands.Kind.NONE || cmd.wakeHeard || awaiting) {
+            lastHeard = "„" + text + "“ → " + describe(cmd, tiles);
         }
         switch (cmd.kind) {
             case WAKE_ONLY:
