@@ -343,7 +343,6 @@ public class PlayerService extends Service {
                 }
                 for (int i = 0; i < metadata.length(); i++) {
                     Metadata.Entry entry = metadata.get(i);
-                    Log.d(TAG, "Metadaten: " + entry);
                     if (entry instanceof IcyInfo) {
                         showTitle(((IcyInfo) entry).title, t);
                     }
@@ -387,6 +386,9 @@ public class PlayerService extends Service {
         String text;
         if (resume) {
             text = (reconnected ? "wieder verbunden, " : "fortgesetzt bei ") + formatTime(resumeAt);
+        } else if (lastTitle != null) {
+            // Der Songtitel kam schon vor dem Start an: nicht mit "läuft" ueberschreiben
+            text = lastTitle;
         } else {
             text = reconnected ? "wieder verbunden" : "läuft";
         }
@@ -418,7 +420,18 @@ public class PlayerService extends Service {
             return;
         }
         lastTitle = clean;
-        showText(clean);
+        // Manche Sender schicken zwischen den Songs nur ihren eigenen Namen
+        showText(sameName(clean, playingName) ? "läuft" : clean);
+    }
+
+    /** "1LIVE" und "1 Live" gelten als gleich. */
+    private static boolean sameName(String a, String b) {
+        if (b == null) {
+            return false;
+        }
+        String x = a.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9äöüß]", "");
+        String y = b.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9äöüß]", "");
+        return !x.isEmpty() && x.equals(y);
     }
 
     private void scheduleStallCheck(String reason, int t) {
