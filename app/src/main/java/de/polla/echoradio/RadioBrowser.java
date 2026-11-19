@@ -56,6 +56,32 @@ final class RadioBrowser {
         throw last != null ? last : new IOException("radio-browser.info nicht erreichbar");
     }
 
+    /**
+     * Wie search(), probiert bei keinem Treffer aber Varianten des Namens:
+     * ohne Leerzeichen ("1 Live" findet so "1LIVE") und nur das erste Wort.
+     */
+    static List<Station> searchFlexible(String name, int limit) throws IOException {
+        String trimmed = name.trim();
+        List<String> variants = new ArrayList<>();
+        variants.add(trimmed);
+        String noSpaces = trimmed.replaceAll("\\s+", "");
+        if (!noSpaces.equals(trimmed)) {
+            variants.add(noSpaces);
+        }
+        int space = trimmed.indexOf(' ');
+        if (space > 2) {
+            variants.add(trimmed.substring(0, space));
+        }
+        List<Station> result = new ArrayList<>();
+        for (String v : variants) {
+            result = search(v, limit);
+            if (!result.isEmpty()) {
+                break;
+            }
+        }
+        return result;
+    }
+
     /** Stream-Adresse des am besten passenden Senders. */
     static String findStreamUrl(String name) throws IOException {
         Station best = null;

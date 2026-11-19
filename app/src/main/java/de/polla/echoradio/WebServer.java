@@ -420,7 +420,7 @@ final class WebServer implements Runnable {
         }
         List<RadioBrowser.Station> found;
         try {
-            found = RadioBrowser.search(query, 40);
+            found = RadioBrowser.searchFlexible(query, 40);
         } catch (IOException e) {
             return json(500, error("Suche fehlgeschlagen: " + e.getMessage()));
         }
@@ -434,7 +434,7 @@ final class WebServer implements Runnable {
                         .put("url", s.url));
             }
         }
-        return json(200, new JSONObject().put("results", arr));
+        return json(200, new JSONObject().put("results", arr).put("found", found.size()));
     }
 
     // ---------------------------------------------------------------- Hilfen

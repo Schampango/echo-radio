@@ -459,7 +459,17 @@ function renderEditor() {
   updateLogoNote();
   logo.addEventListener("input", () => { t.logo = logo.value.trim(); updateLogoNote(); changed(); });
   const results = el("div", { class: "logo-results" });
-  const searchBtn = el("button", { class: "btn small", text: "Logo suchen", onclick: () => searchLogos(t, results, logo, updateLogoNote, changed) });
+  const defaultQuery = (t.type === "search" && t.value && !/^https?:/i.test(t.value))
+    ? t.value : (t.label || "").replace(/\n/g, " ").trim();
+  const query = el("input", { type: "text", placeholder: "Suchbegriff, z. B. 1LIVE" });
+  query.value = defaultQuery;
+  query.style.flex = "1";
+  query.style.minWidth = "120px";
+  query.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") searchLogos(query.value, t, results, logo, updateLogoNote, changed);
+  });
+  const searchBtn = el("button", { class: "btn small", text: "Logo suchen",
+    onclick: () => searchLogos(query.value, t, results, logo, updateLogoNote, changed) });
   const clearBtn = el("button", { class: "btn small", text: "Entfernen", onclick: () => {
     t.logo = "";
     logo.value = "";
@@ -468,7 +478,7 @@ function renderEditor() {
     changed();
   } });
   const logoField = field("Logo", logo, logoNote);
-  logoField.append(el("div", { class: "row" }, [searchBtn, clearBtn]), results);
+  logoField.append(el("div", { class: "row" }, [query, searchBtn, clearBtn]), results);
   box.append(logoField);
 
   // Aktionen
@@ -497,11 +507,10 @@ function renderEditor() {
   updateEditorSaveState();
 }
 
-async function searchLogos(t, results, logoInput, updateNote, changed) {
-  const q = (t.type === "search" && t.value && !/^https?:/i.test(t.value))
-    ? t.value : (t.label || "").replace(/\n/g, " ").trim();
+async function searchLogos(query, t, results, logoInput, updateNote, changed) {
+  const q = (query || "").trim();
   if (!q) {
-    results.replaceChildren(el("div", { class: "note", text: "Erst eine Beschriftung eingeben." }));
+    results.replaceChildren(el("div", { class: "note", text: "Erst einen Suchbegriff eingeben." }));
     return;
   }
   results.replaceChildren(el("div", { class: "note", text: "Suche „" + q + "“ …" }));
@@ -509,7 +518,11 @@ async function searchLogos(t, results, logoInput, updateNote, changed) {
     const d = await api("GET", "/api/logos?q=" + encodeURIComponent(q));
     results.replaceChildren();
     if (!d.results.length) {
-      results.append(el("div", { class: "note", text: "Kein Logo gefunden – anderen Namen in der Beschriftung probieren." }));
+      const text = d.found > 0
+        ? "Sender gefunden, aber im Verzeichnis ist kein Logo hinterlegt. Tipp: Auf der Website des Senders "
+          + "mit rechter Maustaste aufs Logo → „Bildadresse kopieren“ und oben ins Feld Logo einfügen."
+        : "Kein Sender gefunden – anderen Suchbegriff probieren (z. B. ohne Leerzeichen).";
+      results.append(el("div", { class: "note", text }));
       return;
     }
     d.results.forEach((r) => {

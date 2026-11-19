@@ -898,7 +898,7 @@ public class MainActivity extends Activity {
         background.execute(() -> {
             List<RadioBrowser.Station> found;
             try {
-                found = RadioBrowser.search(query, 40);
+                found = RadioBrowser.searchFlexible(query, 40);
             } catch (IOException e) {
                 runOnUiThread(() -> Toast.makeText(this, "Suche fehlgeschlagen: " + e.getMessage(),
                         Toast.LENGTH_LONG).show());
@@ -915,7 +915,9 @@ public class MainActivity extends Activity {
                     return;
                 }
                 if (withLogo.isEmpty()) {
-                    Toast.makeText(this, "Kein Logo gefunden – anderen Namen in der Beschriftung probieren",
+                    Toast.makeText(this, found.isEmpty()
+                                    ? "Kein Sender gefunden – anderen Namen probieren"
+                                    : "Sender gefunden, aber ohne Logo im Verzeichnis – Bildadresse von Hand eintragen",
                             Toast.LENGTH_LONG).show();
                     return;
                 }
