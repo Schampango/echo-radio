@@ -83,6 +83,20 @@ Paketname: `de.polla.echoradio` · Protokoll: `adb logcat -s EchoRadio:*`
   unbrauchbar machen. Du handelst auf eigene Gefahr.
 - Die Weboberfläche hat kein Passwort. Nutze sie nur im eigenen Heimnetz.
 
+## Lizenz
+
+Copyright (C) 2026 Schampango
+
+Echo Radio ist freie Software: Du darfst sie unter den Bedingungen der
+**GNU General Public License, Version 3** (oder nach deiner Wahl einer späteren Version),
+wie von der Free Software Foundation veröffentlicht, weitergeben und verändern.
+Wer eine veränderte Fassung weitergibt, muss deren Quellcode ebenfalls unter der GPL offenlegen.
+
+Die Software wird ohne jede Gewährleistung bereitgestellt. Den vollständigen Text findest du in [LICENSE](LICENSE).
+
+Verwendete Bibliotheken behalten ihre eigenen Lizenzen: Media3 ExoPlayer und Vosk (Apache 2.0),
+JNA (Apache 2.0/LGPL), das Sprachmodell `vosk-model-small-de-0.15` (Apache 2.0).
+
 ## Dank
 
 - **R0rt1z2 (Rortiz2)** für amonet und das Entsperren der Echo-Geräte
