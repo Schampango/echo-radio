@@ -113,6 +113,13 @@ für die App vollständig geschlossen.
 - **Zurück zur Radio-App** (ab Werk aus): Hast du eine andere App geöffnet, holt sich Echo Radio
   nach der eingestellten Zeit wieder nach vorne. Die Zeit zählt ab dem Wechsel in die andere App.
 
+- **Nachtschaltung** (ab Werk aus): In der eingestellten Zeit, z. B. 02:00 bis 08:00, geht das
+  Display **ganz aus**. Radio und Sprachsteuerung laufen weiter. Mit der Taste oben am Echo lässt es sich
+  nachts kurz einschalten; nach der Abdunkel-Zeit (mindestens 1 Minute) geht es wieder aus.
+  Morgens schaltet es sich von selbst ein. Dafür braucht die App einmalig die Berechtigung
+  „Bildschirm sperren“ (siehe [Installationsanleitung](INSTALLATION.md#41-berechtigungen-erteilen));
+  ohne sie wird das Display nachts nur schwarz.
+
 **Einstellen:** am Echo unter *Bearbeiten → Display* oder in der Weboberfläche unter **🖥 Display**.
 
 | Einstellung | Bedeutung |
@@ -121,6 +128,7 @@ für die App vollständig geschlossen.
 | Helligkeit abgedunkelt | 0–30 %; ohne Uhr bedeutet 0 % ganz schwarz |
 | Uhr und laufenden Titel zeigen | an/aus |
 | Aus anderen Apps zurück nach | nie, 1 … 60 min |
+| Display nachts ganz ausschalten | an/aus, mit Uhrzeit von … bis … (auch über Mitternacht, z. B. 23:00–06:00) |
 
 ---
 

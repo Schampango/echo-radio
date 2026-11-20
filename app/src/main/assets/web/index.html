@@ -68,6 +68,7 @@
   .swatches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .swatch { width: 28px; height: 28px; border-radius: 50%; border: 1px solid #cfd6dd; cursor: pointer; padding: 0; }
   .swatch.sel { box-shadow: 0 0 0 3px var(--amber); }
+  input[type=time] { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; background: #fff; }
   input[type=color] { width: 44px; height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: #fff; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
   .logo-results { display: grid; gap: 6px; margin-top: 8px; max-height: 260px; overflow: auto; }
@@ -170,6 +171,12 @@
     <div class="field"><label for="dimLevel">Helligkeit abgedunkelt: <b id="dimLevelText"></b></label>
       <input type="range" id="dimLevel" min="0" max="30" step="1"></div>
     <div class="field"><label><input type="checkbox" id="showClock"> Beim Abdunkeln Uhr und laufenden Titel zeigen</label></div>
+    <div class="field"><label><input type="checkbox" id="nightOn"> Display nachts ganz ausschalten</label>
+      <div class="eq-row" style="margin-top:6px">von <input type="time" id="nightStart" class="input" style="width:auto">
+        bis <input type="time" id="nightEnd" class="input" style="width:auto"></div></div>
+    <p class="note warn hidden" id="nightHint" style="width:100%;margin:0">Zum Ausschalten braucht die App einmalig die Berechtigung „Bildschirm sperren“.
+      Ohne sie wird das Display nachts nur schwarz. Erteilen am Computer:
+      <code>adb shell dpm set-active-admin de.polla.echoradio/.ScreenAdmin</code></p>
     <div class="field"><label for="returnMinutes">Aus anderen Apps zurück zur Radio-App nach</label>
       <select id="returnMinutes"></select></div>
     <span class="save-state" id="settingsState"></span>
@@ -806,6 +813,10 @@ async function loadSettings() {
     fillSelect($("dimSeconds"), DIM_CHOICES, dimName, s.dimSeconds);
     fillSelect($("returnMinutes"), RETURN_CHOICES, returnName, s.returnMinutes);
     $("showClock").checked = s.showClock !== false;
+    $("nightOn").checked = !!s.nightEnabled;
+    $("nightStart").value = s.nightStart || "02:00";
+    $("nightEnd").value = s.nightEnd || "08:00";
+    $("nightHint").classList.toggle("hidden", !s.nightEnabled || s.nightPossible !== false);
     $("dimLevel").value = s.dimLevel;
     $("dimLevelText").textContent = levelName(s.dimLevel);
     $("settingsState").textContent = "";
@@ -824,7 +835,13 @@ async function saveSettings() {
       dimLevel: +$("dimLevel").value,
       returnMinutes: +$("returnMinutes").value,
       showClock: $("showClock").checked,
+      nightEnabled: $("nightOn").checked,
+      nightStart: $("nightStart").value,
+      nightEnd: $("nightEnd").value,
     });
+    // Hinweis zur Berechtigung aktualisieren
+    const s = await api("GET", "/api/settings");
+    $("nightHint").classList.toggle("hidden", !s.nightEnabled || s.nightPossible !== false);
     st.textContent = "✓ Gespeichert";
   } catch (e) {
     st.className = "save-state err";
@@ -842,6 +859,9 @@ $("dimSeconds").addEventListener("change", saveSettings);
 $("returnMinutes").addEventListener("change", saveSettings);
 $("dimLevel").addEventListener("input", () => { $("dimLevelText").textContent = levelName($("dimLevel").value); });
 $("dimLevel").addEventListener("change", saveSettings);
+$("nightOn").addEventListener("change", saveSettings);
+$("nightStart").addEventListener("change", saveSettings);
+$("nightEnd").addEventListener("change", saveSettings);
 $("showClock").addEventListener("change", () => {
   $("dimLevelText").textContent = levelName($("dimLevel").value);
   saveSettings();

@@ -2,6 +2,8 @@ package de.polla.echoradio;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.TimePickerDialog;
+import android.app.admin.DevicePolicyManager;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -44,6 +46,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -120,6 +123,10 @@ public class MainActivity extends Activity {
     /** Display wurde nur fuer einen Sprachbefehl aufgeweckt. */
     private boolean voiceWake;
     private final Runnable dimNow = this::dim;
+    /** Nachtschaltung aktiv: statt abzudunkeln wird das Display ausgeschaltet. */
+    private boolean night;
+    /** Nachts so lange an, nachdem jemand das Display eingeschaltet hat (wenn Abdunkeln "nie"). */
+    private static final int NIGHT_ON_SECONDS = 60;
     private TextView status;
     private TextView editButton;
     private TextView stopButton;
@@ -158,9 +165,17 @@ public class MainActivity extends Activity {
                     listeningFrame.show(mode);
                 }
                 onVoice(mode);
-            } else if (AppSettings.ACTION_CHANGED.equals(intent.getAction())) {
+            } else if (AppSettings.ACTION_CHANGED.equals(intent.getAction())
+                    || NightMode.ACTION_CHANGED.equals(intent.getAction())) {
                 settings = AppSettings.load(MainActivity.this);
-                wake();
+                boolean wasNight = night;
+                night = NightMode.isNight(settings);
+                if (night && !wasNight) {
+                    // Nacht beginnt, waehrend die App vorne ist
+                    dim();
+                } else {
+                    wake();
+                }
             } else if (TileStore.ACTION_TILES_CHANGED.equals(intent.getAction())) {
                 // In der Weboberflaeche geaendert
                 reloadTiles();
@@ -176,6 +191,9 @@ public class MainActivity extends Activity {
         tiles = TileStore.load(this);
         knownRevision = TileStore.revision(this);
         settings = AppSettings.load(this);
+        night = NightMode.isNight(settings);
+        // Wecker der Nachtschaltung (gehen bei jedem Neustart verloren)
+        NightMode.schedule(this);
         // Display bleibt an, solange die App vorne ist; abgedunkelt wird selbst
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // Die Lautstaerketasten am Echo regeln die Musik
@@ -210,6 +228,7 @@ public class MainActivity extends Activity {
         filter.addAction(TileStore.ACTION_TILES_CHANGED);
         filter.addAction(VoiceService.ACTION_LISTENING);
         filter.addAction(AppSettings.ACTION_CHANGED);
+        filter.addAction(NightMode.ACTION_CHANGED);
         registerReceiver(stateReceiver, filter);
         // Waehrend die App im Hintergrund war, kann im Browser etwas geaendert worden sein
         if (TileStore.revision(this) != knownRevision) {
@@ -219,6 +238,7 @@ public class MainActivity extends Activity {
         ticker.post(tick);
         ReturnTimer.cancel();
         settings = AppSettings.load(this);
+        night = NightMode.isNight(settings);
         wake();
     }
 
@@ -269,12 +289,20 @@ public class MainActivity extends Activity {
             dimmed = false;
             applyBrightness();
         }
-        scheduleDim(settings.dimSeconds * 1000L);
+        scheduleDim(dimDelaySeconds() * 1000L);
+    }
+
+    /** Nachts wird auch bei "Abdunkeln: nie" wieder ausgeschaltet. */
+    private int dimDelaySeconds() {
+        if (night && settings.dimSeconds == 0) {
+            return NIGHT_ON_SECONDS;
+        }
+        return settings.dimSeconds;
     }
 
     private void scheduleDim(long delay) {
         ticker.removeCallbacks(dimNow);
-        if (settings.dimSeconds > 0) {
+        if (dimDelaySeconds() > 0) {
             ticker.postDelayed(dimNow, delay);
         }
     }
@@ -282,10 +310,14 @@ public class MainActivity extends Activity {
     private void dim() {
         if (editMode) {
             // Beim Bearbeiten nicht stoeren
-            scheduleDim(settings.dimSeconds * 1000L);
+            scheduleDim(dimDelaySeconds() * 1000L);
             return;
         }
-        if (!dimmed && settings.dimSeconds > 0) {
+        if (night && NightMode.turnOff(this)) {
+            // Display ist aus; beim Einschalten geht es mit onStart weiter
+            return;
+        }
+        if (!dimmed && dimDelaySeconds() > 0) {
             dimmed = true;
             applyBrightness();
         }
@@ -294,12 +326,14 @@ public class MainActivity extends Activity {
     private void applyBrightness() {
         WindowManager.LayoutParams lp = getWindow().getAttributes();
         float overlay;
-        boolean clock = dimmed && settings.showClock;
+        // Nachts ohne Berechtigung zum Ausschalten: so dunkel wie moeglich, ohne Uhr
+        boolean blackout = dimmed && night;
+        boolean clock = dimmed && settings.showClock && !blackout;
         if (dimmed) {
-            int level = settings.dimLevel;
+            int level = blackout ? 0 : settings.dimLevel;
             lp.screenBrightness = Math.max(0.01f, level / 100f);
             // Unterhalb der kleinsten Hintergrundbeleuchtung mit Schwarz nachhelfen
-            overlay = clock ? 0f : level == 0 ? 1f : Math.max(0f, 0.6f * (1f - level / 20f));
+            overlay = blackout ? 1f : clock ? 0f : level == 0 ? 1f : Math.max(0f, 0.6f * (1f - level / 20f));
         } else {
             lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
             overlay = 0f;
@@ -1225,6 +1259,55 @@ public class MainActivity extends Activity {
         clockBox.setText("Beim Abdunkeln Uhr und laufenden Titel zeigen");
         clockBox.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
         clockBox.setChecked(settings.showClock);
+        // Nachtschaltung
+        CheckBox nightBox = new CheckBox(this);
+        nightBox.setText("Display nachts ganz ausschalten");
+        nightBox.setChecked(settings.nightEnabled);
+        int[] nightTimes = {settings.nightStart, settings.nightEnd};
+        LinearLayout nightRow = new LinearLayout(this);
+        nightRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView nightFrom = pillButton(AppSettings.formatTime(nightTimes[0]), 0xFF5E35B1);
+        TextView nightTo = pillButton(AppSettings.formatTime(nightTimes[1]), 0xFF5E35B1);
+        TextView fromLabel = new TextView(this);
+        fromLabel.setText("von ");
+        fromLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        TextView toLabel = new TextView(this);
+        toLabel.setText("  bis ");
+        toLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        nightRow.addView(fromLabel);
+        nightRow.addView(nightFrom, new LinearLayout.LayoutParams(dp(130), dp(48)));
+        nightRow.addView(toLabel);
+        nightRow.addView(nightTo, new LinearLayout.LayoutParams(dp(130), dp(48)));
+        for (int i = 0; i < 2; i++) {
+            final int which = i;
+            TextView btn = i == 0 ? nightFrom : nightTo;
+            btn.setOnClickListener(x -> new TimePickerDialog(this, (tp, h, m) -> {
+                nightTimes[which] = h * 60 + m;
+                btn.setText(AppSettings.formatTime(nightTimes[which]));
+            }, nightTimes[which] / 60, nightTimes[which] % 60, true).show());
+        }
+        TextView nightHint = new TextView(this);
+        nightHint.setTextColor(0xFF6B7785);
+        nightHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        TextView grantButton = pillButton("Berechtigung erteilen", 0xFF757575);
+        grantButton.setOnClickListener(x -> {
+            try {
+                startActivity(new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                        .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, NightMode.admin(this))
+                        .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                "Echo Radio schaltet damit nachts das Display aus. Sonst nichts."));
+            } catch (RuntimeException e) {
+                Toast.makeText(this, "Nicht möglich – per adb erteilen (siehe Anleitung)", Toast.LENGTH_LONG).show();
+            }
+        });
+        boolean canOff = NightMode.canTurnOff(this);
+        nightHint.setText(canOff
+                ? "Radio und Sprachsteuerung laufen nachts weiter. Einschalten mit der Taste oben; "
+                + "nach kurzer Zeit geht das Display wieder aus."
+                : "Zum Ausschalten braucht die App die Berechtigung „Bildschirm sperren“. "
+                + "Ohne sie wird das Display nachts nur schwarz.");
+        grantButton.setVisibility(canOff ? View.GONE : View.VISIBLE);
+
         TextView returnLabel = new TextView(this);
         SeekBar returnBar = new SeekBar(this);
         returnBar.setMax(RETURN_CHOICES.length - 1);
@@ -1257,20 +1340,41 @@ public class MainActivity extends Activity {
         returnBar.setOnSeekBarChangeListener(l);
         clockBox.setOnCheckedChangeListener((v, on) -> labels.run());
 
-        for (View v : new View[]{dimLabel, dimBar, levelLabel, levelBar, clockBox, returnLabel, returnBar}) {
-            if (v instanceof TextView) {
-                ((TextView) v).setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        for (View v : new View[]{dimLabel, dimBar, levelLabel, levelBar, clockBox, returnLabel, returnBar,
+                nightBox, nightRow, nightHint, grantButton}) {
+            if (v instanceof TextView && v != grantButton) {
+                ((TextView) v).setTextSize(TypedValue.COMPLEX_UNIT_SP, v == nightHint ? 15 : 18);
                 ((TextView) v).setPadding(0, dp(12), 0, dp(4));
+            }
+            if (v == nightRow || v == grantButton) {
+                // Knoepfe nicht ueber die ganze Breite ziehen
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, v == grantButton ? dp(48) : ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.topMargin = dp(6);
+                box.addView(v, lp);
+                continue;
             }
             box.addView(v, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
-
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(box);
         new AlertDialog.Builder(this)
                 .setTitle("Display")
-                .setView(box)
-                .setPositiveButton("Speichern", (d, which) -> settings = AppSettings.save(this,
-                        DIM_CHOICES[dimBar.getProgress()], levelBar.getProgress(),
-                        RETURN_CHOICES[returnBar.getProgress()], clockBox.isChecked()))
+                .setView(scroll)
+                .setPositiveButton("Speichern", (d, which) -> {
+                    try {
+                        settings = AppSettings.save(this, new JSONObject()
+                                .put("dimSeconds", DIM_CHOICES[dimBar.getProgress()])
+                                .put("dimLevel", levelBar.getProgress())
+                                .put("returnMinutes", RETURN_CHOICES[returnBar.getProgress()])
+                                .put("showClock", clockBox.isChecked())
+                                .put("nightEnabled", nightBox.isChecked())
+                                .put("nightStart", nightTimes[0])
+                                .put("nightEnd", nightTimes[1]));
+                    } catch (JSONException e) {
+                        Toast.makeText(this, "Nicht gespeichert: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                })
                 .setNegativeButton("Abbrechen", null)
                 .show();
     }

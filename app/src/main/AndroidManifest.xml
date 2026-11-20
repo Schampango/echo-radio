@@ -61,5 +61,23 @@
         <service
             android:name=".WebService"
             android:exported="false" />
+        <!-- Nachtschaltung: Wecker fuer Beginn und Ende -->
+        <receiver
+            android:name=".NightMode"
+            android:exported="false" />
+
+        <!-- Nur "Bildschirm sperren", damit die Nachtschaltung das Display ausschalten darf -->
+        <receiver
+            android:name=".ScreenAdmin"
+            android:label="Echo Radio: Display nachts ausschalten"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

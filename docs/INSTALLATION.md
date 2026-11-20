@@ -129,6 +129,15 @@ adb shell appops set de.polla.echoradio SYSTEM_ALERT_WINDOW allow
 Beides geht auch ohne Computer: Beim ersten Start fragt die App nach dem Mikrofon (*Zulassen*),
 „Über anderen Apps einblenden“ findest du unter *Einstellungen → Apps → Echo Radio*.
 
+Optional für die **Nachtschaltung** (Display nachts ganz aus): Die App braucht dafür die
+Android-Berechtigung „Bildschirm sperren“, sonst nichts.
+
+```bash
+adb shell dpm set-active-admin de.polla.echoradio/.ScreenAdmin
+```
+
+Alternativ am Echo unter *Bearbeiten → Display → Berechtigung erteilen*.
+
 ### 4.2 Als Startbildschirm festlegen
 
 Damit nach dem Einschalten und mit der Home-Geste immer Echo Radio erscheint:
@@ -190,6 +199,8 @@ Weboberfläche → **Sicherung herunterladen**.
 ## 6. Deinstallieren
 
 ```bash
+# nur falls die Nachtschaltung-Berechtigung erteilt wurde, sonst lässt Android nicht deinstallieren
+adb shell dpm remove-active-admin de.polla.echoradio/.ScreenAdmin
 adb uninstall de.polla.echoradio
 ```
 

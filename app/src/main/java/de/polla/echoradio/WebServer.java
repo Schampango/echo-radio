@@ -300,11 +300,11 @@ final class WebServer implements Runnable {
                 break;
             case "/api/settings":
                 if ("GET".equals(m)) {
-                    return json(200, AppSettings.load(context).toJson());
+                    return json(200, AppSettings.load(context).toJson(context));
                 }
                 if ("PUT".equals(m) || "POST".equals(m)) {
                     try {
-                        return json(200, AppSettings.save(context, new JSONObject(req.bodyText())).toJson());
+                        return json(200, AppSettings.save(context, new JSONObject(req.bodyText())).toJson(context));
                     } catch (JSONException e) {
                         return json(400, error("Ungültige Daten: " + e.getMessage()));
                     }
