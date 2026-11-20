@@ -34,6 +34,13 @@ android {
         abortOnError false
         checkReleaseBuilds false
     }
+
+    // APK heisst echo-radio-<Version>.apk statt app-debug.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "echo-radio-${variant.versionName}.apk"
+        }
+    }
 }
 
 dependencies {

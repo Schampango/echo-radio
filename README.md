@@ -54,7 +54,7 @@ Ohne Amazon-Konto, ohne Cloud. Die Spracherkennung läuft vollständig auf dem G
 git clone https://github.com/Schampango/echo-radio.git
 cd echo-radio
 ./build.sh                                   # Linux Mint/Ubuntu, als root
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r echo-radio.apk
 adb shell pm grant de.polla.echoradio android.permission.RECORD_AUDIO
 adb shell appops set de.polla.echoradio SYSTEM_ALERT_WINDOW allow
 adb shell cmd package set-home-activity de.polla.echoradio/.MainActivity

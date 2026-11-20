@@ -34,7 +34,12 @@ echo "== App bauen"
 chmod +x gradlew
 ./gradlew --no-daemon assembleDebug
 
-APK=app/build/outputs/apk/debug/app-debug.apk
+# Ergebnis in den Projektordner: mit Version und als echo-radio.apk (fuer gleichbleibende Befehle)
+BUILT=$(ls -t app/build/outputs/apk/debug/echo-radio-*.apk | head -n 1)
+cp "$BUILT" .
+cp "$BUILT" echo-radio.apk
 echo
-echo "Fertig: $(pwd)/$APK"
-ls -l "$APK"
+echo "Fertig: $(pwd)/$(basename "$BUILT")"
+echo "  und:  $(pwd)/echo-radio.apk"
+echo
+echo "Installieren: adb install -r echo-radio.apk"

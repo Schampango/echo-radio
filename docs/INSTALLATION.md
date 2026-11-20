@@ -99,16 +99,17 @@ cd echo-radio
 ```
 
 Beim ersten Mal installiert das Skript Java 17 und das Android SDK nach `/opt/android-sdk`
-(ca. 1 GB Download). Das Ergebnis liegt unter `app/build/outputs/apk/debug/app-debug.apk`.
+(ca. 1 GB Download). Das Ergebnis liegt im Projektordner als `echo-radio-<Version>.apk`
+und zusätzlich als `echo-radio.apk`.
 
 ### 3.3 Auf den Echo spielen
 
 ```bash
-adb install -r app-debug.apk
+adb install -r echo-radio.apk
 ```
 
 (bei Variante A den Namen der heruntergeladenen Datei einsetzen,
-bei Variante B `app/build/outputs/apk/debug/app-debug.apk`).
+bei Variante B liegt `echo-radio.apk` schon im Projektordner).
 
 ---
 
@@ -185,7 +186,7 @@ Die Einstellungen und Knöpfe bleiben beim Aktualisieren erhalten.
 cd echo-radio
 git pull
 ./build.sh
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r echo-radio.apk
 adb shell am start -n de.polla.echoradio/.MainActivity
 ```
 
