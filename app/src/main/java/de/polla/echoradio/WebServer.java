@@ -426,7 +426,10 @@ final class WebServer implements Runnable {
         o.put("voice", new JSONObject()
                 .put("enabled", VoiceService.isEnabled(context))
                 .put("state", VoiceService.state)
-                .put("heard", VoiceService.lastHeard));
+                .put("heard", VoiceService.lastHeard)
+                .put("live", VoiceService.live)
+                .put("silentFor", VoiceService.lastCallbackAt == 0 ? -1
+                        : (android.os.SystemClock.elapsedRealtime() - VoiceService.lastCallbackAt) / 1000));
         return o;
     }
 

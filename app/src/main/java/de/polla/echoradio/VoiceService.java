@@ -18,6 +18,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.WindowManager;
@@ -75,6 +76,24 @@ public class VoiceService extends Service implements RecognitionListener {
     static volatile String state = "aus";
     /** Zuletzt gehoerter Befehl, fuer die Weboberflaeche. */
     static volatile String lastHeard = "";
+    /** Was die Erkennung gerade versteht (Teilergebnis), fuer die Weboberflaeche. */
+    static volatile String live = "";
+    /** Zeitpunkt der letzten Rueckmeldung der Erkennung (elapsedRealtime), 0 = keine. */
+    static volatile long lastCallbackAt;
+
+    // Ueberwachung der Erkennung
+    private static final long WATCH_MS = 10_000;
+    /** Keine Rueckmeldung so lange: Erkennung haengt, neu starten. */
+    private static final long STUCK_MS = 30_000;
+    /** Kein Satzende so lange (Dauergeraeusch): Erkennung zuruecksetzen, sonst laeuft sie hinterher. */
+    private static final long NO_FINAL_MS = 45_000;
+    /** Alle 10 Minuten ein Lebenszeichen ins Protokoll. */
+    private static final long HEARTBEAT_MS = 600_000;
+    private long lastFinalAt;
+    private long lastHeartbeatAt;
+    private int callbacks;
+    private int restarts;
+    private final Runnable watchdog = this::watch;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -172,6 +191,8 @@ public class VoiceService extends Service implements RecognitionListener {
     public void onDestroy() {
         destroyed = true;
         main.removeCallbacks(endAwait);
+        main.removeCallbacks(watchdog);
+        live = "";
         if (awaiting) {
             PlayerService.duck(false);
         }
@@ -225,6 +246,12 @@ public class VoiceService extends Service implements RecognitionListener {
                 speech = s;
                 speech.startListening(this);
                 state = LISTENING;
+                long now = SystemClock.elapsedRealtime();
+                lastCallbackAt = now;
+                lastFinalAt = now;
+                lastHeartbeatAt = now;
+                main.removeCallbacks(watchdog);
+                main.postDelayed(watchdog, WATCH_MS);
                 Log.i(TAG, "Sprachsteuerung bereit");
             });
         } catch (Exception e) {
@@ -342,7 +369,9 @@ public class VoiceService extends Service implements RecognitionListener {
 
     @Override
     public void onPartialResult(String hypothesis) {
+        alive();
         String text = field(hypothesis, "partial");
+        live = tail(text);
         if (!awaiting && !text.isEmpty() && VoiceCommands.hasWakeWord(text)) {
             startAwaiting();
         }
@@ -350,12 +379,82 @@ public class VoiceService extends Service implements RecognitionListener {
 
     @Override
     public void onResult(String hypothesis) {
-        handle(field(hypothesis, "text"));
+        alive();
+        lastFinalAt = lastCallbackAt;
+        String text = field(hypothesis, "text");
+        if (!text.isEmpty()) {
+            live = tail(text);
+        }
+        handle(text);
     }
 
     @Override
     public void onFinalResult(String hypothesis) {
+        alive();
+        lastFinalAt = lastCallbackAt;
         handle(field(hypothesis, "text"));
+    }
+
+    private void alive() {
+        lastCallbackAt = SystemClock.elapsedRealtime();
+        callbacks++;
+    }
+
+    /** Nur das Ende langer Texte anzeigen. */
+    private static String tail(String text) {
+        return text.length() <= 80 ? text : "…" + text.substring(text.length() - 79);
+    }
+
+    /** Laeuft alle 10 s: haengt die Erkennung oder laeuft sie hinterher, neu starten. */
+    private void watch() {
+        if (destroyed || speech == null) {
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (!awaiting) {
+            if (now - lastCallbackAt > STUCK_MS) {
+                restartRecognizer("keine Rückmeldung seit " + (now - lastCallbackAt) / 1000 + " s");
+            } else if (now - lastFinalAt > NO_FINAL_MS) {
+                restartRecognizer("kein Satzende seit " + (now - lastFinalAt) / 1000 + " s");
+            }
+        }
+        if (now - lastHeartbeatAt >= HEARTBEAT_MS) {
+            Log.i(TAG, "Sprachsteuerung läuft: " + callbacks + " Rückmeldungen in "
+                    + (now - lastHeartbeatAt) / 60000 + " min, " + restarts + " Neustarts, zuletzt gehört: „" + live + "“");
+            lastHeartbeatAt = now;
+            callbacks = 0;
+            restarts = 0;
+        }
+        main.postDelayed(watchdog, WATCH_MS);
+    }
+
+    /** Erkennung anhalten, zuruecksetzen und wieder starten (Modell bleibt geladen). */
+    private void restartRecognizer(String reason) {
+        restarts++;
+        // Nur ungewoehnliche Neustarts ausfuehrlich protokollieren
+        if (reason.startsWith("keine")) {
+            Log.w(TAG, "Spracherkennung neu gestartet: " + reason);
+        }
+        try {
+            speech.stop();
+            if (reason.startsWith("keine")) {
+                // Haengt der Thread, lieber ganz neu aufbauen
+                speech.shutdown();
+                recognizer.close();
+                recognizer = new Recognizer(model, SAMPLE_RATE);
+                speech = new SpeechService(recognizer, SAMPLE_RATE);
+            } else {
+                recognizer.reset();
+            }
+            speech.startListening(this);
+            state = LISTENING;
+        } catch (Exception e) {
+            Log.w(TAG, "Spracherkennung: Neustart fehlgeschlagen", e);
+            state = "Fehler: " + e.getMessage();
+        }
+        long now = SystemClock.elapsedRealtime();
+        lastCallbackAt = now;
+        lastFinalAt = now;
     }
 
     @Override

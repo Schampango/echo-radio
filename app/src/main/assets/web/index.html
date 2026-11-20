@@ -140,7 +140,8 @@
         Die Namen der Sender stellst du beim jeweiligen Knopf unter „Sprachbefehl“ ein.</span>
       <span class="save-state" id="wordsState"></span>
     </div>
-    <div class="heard" id="heard">Zuletzt gehört: –</div>
+    <div class="heard"><div id="heard">Zuletzt gehört: –</div>
+      <div class="note" id="live" style="margin:4px 0 0">Versteht gerade: –</div></div>
     <div class="words" id="wordGroups"></div>
     <div class="eq-row"><button class="btn small" id="wordsReset">Alles auf Standard zurücksetzen</button></div>
   </div>
@@ -703,6 +704,9 @@ async function poll() {
       vb.title = "Sprachsteuerung: " + d.voice.state + " – klicken zum " + (d.voice.enabled ? "Ausschalten" : "Einschalten");
       vb.dataset.enabled = d.voice.enabled ? "1" : "0";
       $("heard").textContent = "Zuletzt gehört: " + (d.voice.heard || "–");
+      const sf = d.voice.silentFor;
+      $("live").textContent = "Versteht gerade: " + (d.voice.live || "–")
+        + (d.voice.enabled && sf > 20 ? "  ⚠ keine Rückmeldung seit " + sf + " s" : "");
     }
     if (!volDragging) {
       $("volume").value = d.volume;
