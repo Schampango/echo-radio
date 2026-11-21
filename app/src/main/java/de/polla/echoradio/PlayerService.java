@@ -399,10 +399,17 @@ public class PlayerService extends Service {
             // HLS sicher erkennen, auch wenn die Adresse nach Weiterleitung anders endet
             item.setMimeType(MimeTypes.APPLICATION_M3U8);
         }
-        p.setMediaItem(item.build());
-        // Bei Podcasts erst an die gemerkte Stelle springen, dann abspielen
-        p.setPlayWhenReady(resumeAt <= 0);
-        p.prepare();
+        try {
+            p.setMediaItem(item.build());
+            // Bei Podcasts erst an die gemerkte Stelle springen, dann abspielen
+            p.setPlayWhenReady(resumeAt <= 0);
+            p.prepare();
+        } catch (RuntimeException e) {
+            // z. B. fehlender Baustein fuer ein Stream-Format: nicht die ganze App abstuerzen lassen
+            Log.w(TAG, "Stream kann nicht gestartet werden: " + url, e);
+            stopAll(name + ": Format wird nicht unterstützt");
+            return;
+        }
         scheduleStallCheck("keine Antwort vom Sender", t);
     }
 
