@@ -42,6 +42,7 @@ import java.util.concurrent.Executors;
  * GET  /api/apps       installierte Apps
  * GET  /api/logos?q=   Logo-Suche bei radio-browser.info
  * GET  /api/export     Sicherung als Datei
+ * GET|PUT|DELETE /api/background  Hintergrundbild (PUT: Bilddaten, wird verkleinert)
  */
 final class WebServer implements Runnable {
 
@@ -308,6 +309,33 @@ final class WebServer implements Runnable {
                     } catch (JSONException e) {
                         return json(400, error("Ungültige Daten: " + e.getMessage()));
                     }
+                }
+                break;
+            case "/api/background":
+                if ("GET".equals(m)) {
+                    if (!Background.has(context)) {
+                        return json(404, error("Kein Hintergrundbild"));
+                    }
+                    try {
+                        byte[] data = java.nio.file.Files.readAllBytes(Background.file(context).toPath());
+                        return new Response(200, "image/jpeg", data);
+                    } catch (IOException e) {
+                        return json(500, error(e.getMessage()));
+                    }
+                }
+                if ("PUT".equals(m) || "POST".equals(m)) {
+                    try {
+                        Background.save(context, req.body);
+                    } catch (IOException e) {
+                        return json(400, error(e.getMessage()));
+                    }
+                    context.sendBroadcast(new Intent(AppSettings.ACTION_CHANGED).setPackage(context.getPackageName()));
+                    return json(200, AppSettings.load(context).toJson(context));
+                }
+                if ("DELETE".equals(m)) {
+                    Background.remove(context);
+                    context.sendBroadcast(new Intent(AppSettings.ACTION_CHANGED).setPackage(context.getPackageName()));
+                    return json(200, AppSettings.load(context).toJson(context));
                 }
                 break;
             case "/api/eq":

@@ -32,6 +32,7 @@ Ohne Amazon-Konto, ohne Cloud. Die Spracherkennung läuft vollständig auf dem G
 **Display**
 - Bleibt an, dunkelt nach einstellbarer Zeit ab und zeigt dann eine Uhr mit Sender, Interpret und Titel
 - Nachtschaltung: Display zu einer festen Zeit ganz aus, morgens wieder an
+- Eigene Hintergrundfarbe oder eigenes Hintergrundbild
 - Aufwecken per Berührung oder Sprache
 - Läuft als Startbildschirm; holt sich auf Wunsch aus anderen Apps wieder nach vorne
 

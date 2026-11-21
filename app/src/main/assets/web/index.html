@@ -116,6 +116,11 @@
   .heard { background: #f7f9fb; border-radius: 8px; padding: 8px 12px; width: 100%; }
   @media (max-width: 700px) { .wgroup { grid-template-columns: 1fr; } }
   #wordsBtn.open { border-color: var(--blue); color: var(--blue); }
+  .bg-preview { width: 192px; height: 120px; border-radius: 10px; border: 1px solid var(--line);
+    background-size: cover; background-position: center; position: relative; overflow: hidden; flex: none; }
+  .bg-preview .shade { position: absolute; inset: 0; background: #000; }
+  .bg-preview .dot { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: #00A0E3; top: 30px; }
+  .bg-preview .txt { position: absolute; left: 10px; bottom: 8px; font-size: 12px; font-weight: 600; }
   #eqBtn.open { border-color: var(--blue); color: var(--blue); }
   #displayBtn.open { border-color: var(--blue); color: var(--blue); }
 </style>
@@ -182,6 +187,23 @@
     <p class="note warn hidden" id="nightHint" style="width:100%;margin:0">Zum Ausschalten braucht die App einmalig die Berechtigung „Bildschirm sperren“.
       Ohne sie wird das Display nachts nur schwarz. Erteilen am Computer:
       <code>adb shell dpm set-active-admin de.polla.echoradio/.ScreenAdmin</code></p>
+    <div class="field" style="width:100%"><label>Hintergrund</label>
+      <div class="eq-row" style="align-items:flex-start">
+        <div class="bg-preview" id="bgPreview"><div class="shade" id="bgPreviewShade"></div>
+          <div class="dot" style="left:30px"></div><div class="dot" style="left:78px"></div><div class="dot" style="left:126px"></div>
+          <div class="txt" id="bgPreviewTxt">1 Live – läuft</div></div>
+        <div style="display:grid;gap:8px">
+          <div class="eq-row">Farbe <input type="color" id="bgColor">
+            <button class="btn small" id="bgUpload">Bild hochladen …</button>
+            <button class="btn small" id="bgRemove">Bild entfernen</button>
+            <input type="file" id="bgFile" accept="image/*" class="hidden"></div>
+          <div class="eq-row">Bild abdunkeln: <b id="bgDimText"></b>
+            <input type="range" id="bgDim" min="0" max="80" step="5"></div>
+          <span class="note" style="margin:0">Fotos werden vor dem Hochladen auf Displaygröße verkleinert.
+            Abdunkeln macht Text und Knöpfe auf hellen Fotos besser lesbar.</span>
+        </div>
+      </div>
+    </div>
     <div class="field"><label for="returnMinutes">Aus anderen Apps zurück zur Radio-App nach</label>
       <select id="returnMinutes"></select></div>
     <span class="save-state" id="settingsState"></span>
@@ -852,6 +874,7 @@ async function loadSettings() {
     fillSelect($("dimSeconds"), DIM_CHOICES, dimName, s.dimSeconds);
     fillSelect($("returnMinutes"), RETURN_CHOICES, returnName, s.returnMinutes);
     $("showClock").checked = s.showClock !== false;
+    renderBackground(s);
     $("nightOn").checked = !!s.nightEnabled;
     $("nightStart").value = s.nightStart || "02:00";
     $("nightEnd").value = s.nightEnd || "08:00";
@@ -898,6 +921,97 @@ $("dimSeconds").addEventListener("change", saveSettings);
 $("returnMinutes").addEventListener("change", saveSettings);
 $("dimLevel").addEventListener("input", () => { $("dimLevelText").textContent = levelName($("dimLevel").value); });
 $("dimLevel").addEventListener("change", saveSettings);
+// ------------------------------------------------------------ Hintergrund
+
+let bgState = null;
+
+function lumaOf(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return (0.299 * (n >> 16 & 255) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255;
+}
+
+function renderBackground(s) {
+  bgState = s;
+  $("bgColor").value = (s.bgColor || "#FFFFFF").toLowerCase();
+  $("bgDim").value = s.bgDim ?? 20;
+  $("bgDimText").textContent = (s.bgDim ?? 20) + " %";
+  const pv = $("bgPreview");
+  pv.style.backgroundColor = s.bgColor || "#FFFFFF";
+  pv.style.backgroundImage = s.bgImage ? "url(/api/background?v=" + s.bgVersion + ")" : "none";
+  $("bgPreviewShade").style.opacity = s.bgImage ? (s.bgDim || 0) / 100 : 0;
+  // Wie am Echo: bei Bildern rechnet der Echo die Helligkeit aus (bgDarkText)
+  const dark = s.bgImage ? !s.bgDarkText : lumaOf(s.bgColor || "#FFFFFF") < 0.55;
+  $("bgPreviewTxt").style.color = dark ? "#fff" : "#444";
+  $("bgRemove").disabled = !s.bgImage;
+}
+
+async function saveBackground(patch) {
+  const st = $("settingsState");
+  st.className = "save-state";
+  st.textContent = "Speichert …";
+  try {
+    renderBackground({ ...bgState, ...patch, ...(await api("PUT", "/api/settings", patch)) });
+    st.textContent = "✓ Gespeichert";
+  } catch (e) {
+    st.className = "save-state err";
+    st.textContent = "Fehler: " + e.message;
+  }
+}
+
+/** Bild im Browser auf hoechstens 1920 px verkleinern und als JPEG liefern. */
+function shrinkImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const f = Math.min(1, 1920 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.naturalWidth * f);
+      c.height = Math.round(img.naturalHeight * f);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error("Bild nicht lesbar"))), "image/jpeg", 0.88);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Kein Bild oder Format nicht unterstützt")); };
+    img.src = url;
+  });
+}
+
+$("bgColor").addEventListener("change", () => saveBackground({ bgColor: $("bgColor").value.toUpperCase() }));
+$("bgDim").addEventListener("input", () => {
+  $("bgDimText").textContent = $("bgDim").value + " %";
+  if (bgState) renderBackground({ ...bgState, bgDim: +$("bgDim").value });
+});
+$("bgDim").addEventListener("change", () => saveBackground({ bgDim: +$("bgDim").value }));
+$("bgUpload").addEventListener("click", () => $("bgFile").click());
+$("bgFile").addEventListener("change", async () => {
+  const file = $("bgFile").files[0];
+  $("bgFile").value = "";
+  if (!file) return;
+  const st = $("settingsState");
+  st.className = "save-state";
+  st.textContent = "Lädt Bild hoch …";
+  try {
+    const blob = await shrinkImage(file);
+    const r = await fetch("/api/background", { method: "PUT", headers: { "Content-Type": "image/jpeg" }, body: blob });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+    renderBackground(d);
+    st.textContent = "✓ Bild übernommen";
+  } catch (e) {
+    st.className = "save-state err";
+    st.textContent = "Fehler: " + e.message;
+  }
+});
+$("bgRemove").addEventListener("click", async () => {
+  try {
+    renderBackground(await api("DELETE", "/api/background"));
+    $("settingsState").textContent = "✓ Bild entfernt";
+  } catch (e) {
+    $("settingsState").textContent = "Fehler: " + e.message;
+  }
+});
+
 $("nightOn").addEventListener("change", saveSettings);
 $("nightStart").addEventListener("change", saveSettings);
 $("nightEnd").addEventListener("change", saveSettings);

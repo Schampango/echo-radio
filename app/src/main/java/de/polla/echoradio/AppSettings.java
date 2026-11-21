@@ -3,6 +3,7 @@ package de.polla.echoradio;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Color;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -19,6 +20,8 @@ final class AppSettings {
     private static final String NIGHT_ENABLED = "night_enabled";
     private static final String NIGHT_START = "night_start";
     private static final String NIGHT_END = "night_end";
+    private static final String BG_COLOR = "bg_color";
+    private static final String BG_DIM = "bg_dim";
 
     /** Abdunkeln nach so vielen Sekunden ohne Beruehrung, 0 = nie. */
     final int dimSeconds;
@@ -33,9 +36,15 @@ final class AppSettings {
     /** Beginn und Ende der Nacht in Minuten nach Mitternacht (z. B. 120 = 02:00). */
     final int nightStart;
     final int nightEnd;
+    /** Hintergrundfarbe des Startbildschirms. */
+    final int bgColor;
+    /** Hintergrundbild abdunkeln, 0..80 %. */
+    final int bgDim;
 
     private AppSettings(int dimSeconds, int dimLevel, int returnMinutes, boolean showClock,
-                        boolean nightEnabled, int nightStart, int nightEnd) {
+                        boolean nightEnabled, int nightStart, int nightEnd, int bgColor, int bgDim) {
+        this.bgColor = 0xFF000000 | bgColor;
+        this.bgDim = clamp(bgDim, 0, 80);
         this.dimSeconds = clamp(dimSeconds, 0, 3600);
         this.dimLevel = clamp(dimLevel, 0, 100);
         this.returnMinutes = clamp(returnMinutes, 0, 240);
@@ -49,7 +58,8 @@ final class AppSettings {
         SharedPreferences p = prefs(c);
         return new AppSettings(p.getInt(DIM_SECONDS, 60), p.getInt(DIM_LEVEL, 5), p.getInt(RETURN_MINUTES, 0),
                 p.getBoolean(SHOW_CLOCK, true),
-                p.getBoolean(NIGHT_ENABLED, false), p.getInt(NIGHT_START, 120), p.getInt(NIGHT_END, 480));
+                p.getBoolean(NIGHT_ENABLED, false), p.getInt(NIGHT_START, 120), p.getInt(NIGHT_END, 480),
+                p.getInt(BG_COLOR, Color.WHITE), p.getInt(BG_DIM, 20));
     }
 
     /** Uebernimmt nur die Felder, die im JSON stehen, speichert und sagt der App Bescheid. */
@@ -62,7 +72,9 @@ final class AppSettings {
                 o.optBoolean("showClock", old.showClock),
                 o.optBoolean("nightEnabled", old.nightEnabled),
                 parseTime(o.opt("nightStart"), old.nightStart),
-                parseTime(o.opt("nightEnd"), old.nightEnd));
+                parseTime(o.opt("nightEnd"), old.nightEnd),
+                parseColor(o.optString("bgColor", ""), old.bgColor),
+                o.optInt("bgDim", old.bgDim));
         prefs(c).edit()
                 .putInt(DIM_SECONDS, s.dimSeconds)
                 .putInt(DIM_LEVEL, s.dimLevel)
@@ -71,6 +83,8 @@ final class AppSettings {
                 .putBoolean(NIGHT_ENABLED, s.nightEnabled)
                 .putInt(NIGHT_START, s.nightStart)
                 .putInt(NIGHT_END, s.nightEnd)
+                .putInt(BG_COLOR, s.bgColor)
+                .putInt(BG_DIM, s.bgDim)
                 .commit();
         NightMode.schedule(c);
         c.sendBroadcast(new Intent(ACTION_CHANGED).setPackage(c.getPackageName()));
@@ -87,7 +101,12 @@ final class AppSettings {
                 .put("nightStart", formatTime(nightStart))
                 .put("nightEnd", formatTime(nightEnd))
                 .put("nightPossible", NightMode.canTurnOff(c))
-                .put("nightNow", NightMode.isNight(this));
+                .put("nightNow", NightMode.isNight(this))
+                .put("bgColor", Tile.toHex(bgColor))
+                .put("bgDim", bgDim)
+                .put("bgImage", Background.has(c))
+                .put("bgVersion", Background.version(c))
+                .put("bgDarkText", !darkBackground(c));
     }
 
     /** "02:00" oder Minuten als Zahl. */
@@ -108,6 +127,22 @@ final class AppSettings {
             }
         }
         return fallback;
+    }
+
+    static int parseColor(String hex, int fallback) {
+        if (hex == null || !hex.trim().matches("#?[0-9a-fA-F]{6}")) {
+            return fallback;
+        }
+        String h = hex.trim();
+        return 0xFF000000 | Integer.parseInt(h.startsWith("#") ? h.substring(1) : h, 16);
+    }
+
+    /** Text auf dem Startbildschirm hell (true) oder dunkel? */
+    boolean darkBackground(Context c) {
+        float luma = Background.has(c)
+                ? Background.luma(c) * (1f - bgDim / 100f)
+                : Background.luma(bgColor);
+        return luma < 0.55f;
     }
 
     static String formatTime(int minutes) {

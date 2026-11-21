@@ -122,6 +122,10 @@ für die App vollständig geschlossen.
   ohne sie wird das Display nachts nur schwarz.
 
 **Einstellen:** am Echo unter *Bearbeiten → Display* oder in der Weboberfläche unter **🖥 Display**.
+Den **Hintergrund** änderst du am Echo über *Display → Hintergrund ändern …* (Farbe wählen oder Bild aus
+dem Gerätespeicher), bequemer in der Weboberfläche: **Bild hochladen …** nimmt jedes Foto vom Computer
+oder Handy, verkleinert es automatisch und zeigt eine Vorschau. Die Schrift unten wird je nach Helligkeit
+des Hintergrunds automatisch hell oder dunkel.
 
 | Einstellung | Bedeutung |
 |---|---|
@@ -129,6 +133,7 @@ für die App vollständig geschlossen.
 | Helligkeit abgedunkelt | 0–30 %; ohne Uhr bedeutet 0 % ganz schwarz |
 | Uhr und laufenden Titel zeigen | an/aus |
 | Aus anderen Apps zurück nach | nie, 1 … 60 min |
+| Hintergrund | Farbe und eigenes Bild (Foto) für den Startbildschirm; Bild abdunkeln 0–80 % für bessere Lesbarkeit |
 | Display nachts ganz ausschalten | an/aus, mit Uhrzeit von … bis … (auch über Mitternacht, z. B. 23:00–06:00) |
 
 ---

@@ -100,6 +100,7 @@ public class MainActivity extends Activity {
     private static final int REQUEST_EXPORT = 1;
     private static final int REQUEST_IMPORT = 2;
     private static final int REQUEST_MICROPHONE = 3;
+    private static final int REQUEST_BACKGROUND = 4;
 
     private List<Tile> tiles;
     /** Revision der Knoepfe, die gerade angezeigt werden. */
@@ -119,6 +120,13 @@ public class MainActivity extends Activity {
     private AppSettings settings;
     private View dimOverlay;
     private ClockView clockView;
+    // Hintergrund
+    private FrameLayout outerView;
+    private ImageView bgImage;
+    private View bgShade;
+    private long bgLoadedVersion = -1;
+    private boolean darkBg;
+    private TextView pageIndicator;
     private boolean dimmed;
     /** Die Beruehrung, die das Display aufweckt, loest nichts aus. */
     private boolean swallowTouch;
@@ -170,6 +178,7 @@ public class MainActivity extends Activity {
             } else if (AppSettings.ACTION_CHANGED.equals(intent.getAction())
                     || NightMode.ACTION_CHANGED.equals(intent.getAction())) {
                 settings = AppSettings.load(MainActivity.this);
+                applyBackground();
                 boolean wasNight = night;
                 night = NightMode.isNight(settings);
                 if (night && !wasNight) {
@@ -398,7 +407,8 @@ public class MainActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.WHITE);
+        // Farbe und Bild liegen dahinter (applyBackground)
+        root.setBackgroundColor(Color.TRANSPARENT);
         root.setPadding(pad, pad, pad, pad);
 
         gridHolder = new SwipeFrame(this);
@@ -498,6 +508,17 @@ public class MainActivity extends Activity {
 
         // Rand fuer die Sprachsteuerung liegt ueber allem
         FrameLayout outer = new FrameLayout(this);
+        outerView = outer;
+        bgImage = new ImageView(this);
+        bgImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        bgImage.setVisibility(View.GONE);
+        outer.addView(bgImage, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        bgShade = new View(this);
+        bgShade.setBackgroundColor(Color.BLACK);
+        bgShade.setVisibility(View.GONE);
+        outer.addView(bgShade, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         outer.addView(root, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         dimOverlay = new View(this);
@@ -516,6 +537,187 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(outer);
         updateBarButtons();
+        applyBackground();
+    }
+
+    // ---------------------------------------------------------------- Hintergrund
+
+    /** Farbe, Bild und passende Textfarbe anwenden. */
+    private void applyBackground() {
+        if (outerView == null) {
+            return;
+        }
+        outerView.setBackgroundColor(settings.bgColor);
+        boolean hasImage = Background.has(this);
+        long version = Background.version(this);
+        if (hasImage) {
+            if (version != bgLoadedVersion) {
+                android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+                bgImage.setImageBitmap(Background.load(this, dm.widthPixels, dm.heightPixels));
+                bgLoadedVersion = version;
+            }
+            bgImage.setVisibility(View.VISIBLE);
+            bgShade.setAlpha(settings.bgDim / 100f);
+            bgShade.setVisibility(settings.bgDim > 0 ? View.VISIBLE : View.GONE);
+        } else {
+            bgImage.setImageDrawable(null);
+            bgImage.setVisibility(View.GONE);
+            bgShade.setVisibility(View.GONE);
+            bgLoadedVersion = -1;
+        }
+        darkBg = settings.darkBackground(this);
+        int main = darkBg ? Color.WHITE : 0xFF444444;
+        int second = darkBg ? 0xFFE0E0E0 : 0xFF616161;
+        float shadow = darkBg ? dp(2) : 0f;
+        status.setTextColor(main);
+        status.setShadowLayer(shadow, 0, shadow / 2, 0xB0000000);
+        for (TextView t : new TextView[]{positionLabel, durationLabel}) {
+            t.setTextColor(second);
+            t.setShadowLayer(shadow, 0, shadow / 2, 0xB0000000);
+        }
+        if (pageIndicator != null) {
+            pageIndicator.setTextColor(darkBg ? 0xFFE0E0E0 : 0xFF9E9E9E);
+        }
+    }
+
+    private void showBackgroundSettings() {
+        int pad = dp(20);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(pad, dp(8), pad, 0);
+
+        caption(box, "Hintergrundfarbe");
+        GridLayout swatches = new GridLayout(this);
+        swatches.setColumnCount(7);
+        List<View> swatchViews = new ArrayList<>();
+        int[] colors = {0xFFFFFFFF, 0xFFF5F5F5, 0xFFECEFF1, 0xFFFFF8E1, 0xFFE3F2FD, 0xFFE8F5E9, 0xFFFCE4EC,
+                0xFF212121, 0xFF263238, 0xFF0D47A1, 0xFF1B5E20, 0xFF4A148C, 0xFF3E2723, 0xFF000000};
+        for (int color : colors) {
+            View sw = new View(this);
+            sw.setTag(color);
+            sw.setOnClickListener(x -> {
+                markSwatches(swatchViews, color);
+                saveBackgroundSetting("bgColor", Tile.toHex(color));
+            });
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+            lp.width = dp(44);
+            lp.height = dp(44);
+            lp.setMargins(dp(6), dp(6), dp(6), dp(6));
+            swatches.addView(sw, lp);
+            swatchViews.add(sw);
+        }
+        markSwatches(swatchViews, settings.bgColor);
+        box.addView(swatches);
+
+        caption(box, "Hintergrundbild");
+        LinearLayout buttons = new LinearLayout(this);
+        TextView pick = pillButton("Bild wählen …", 0xFF5E35B1);
+        pick.setOnClickListener(x -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("image/*");
+            try {
+                startActivityForResult(i, REQUEST_BACKGROUND);
+            } catch (RuntimeException e) {
+                Toast.makeText(this, "Keine Dateiauswahl verfügbar – Bild über die Weboberfläche hochladen",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
+        TextView remove = pillButton("Bild entfernen", 0xFF757575);
+        remove.setOnClickListener(x -> {
+            Background.remove(this);
+            applyBackground();
+            Toast.makeText(this, "Hintergrundbild entfernt", Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
+        blp.setMarginEnd(dp(12));
+        buttons.addView(pick, blp);
+        buttons.addView(remove, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
+        box.addView(buttons);
+
+        TextView dimLabel = new TextView(this);
+        dimLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        dimLabel.setPadding(0, dp(16), 0, 0);
+        dimLabel.setText("Bild abdunkeln: " + settings.bgDim + " %");
+        SeekBar dimBar = new SeekBar(this);
+        dimBar.setMax(16); // 0..80 % in 5er-Schritten
+        dimBar.setProgress(settings.bgDim / 5);
+        dimBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
+                dimLabel.setText("Bild abdunkeln: " + p * 5 + " %");
+                if (fromUser) {
+                    bgShade.setAlpha(p * 5 / 100f);
+                    bgShade.setVisibility(p > 0 && Background.has(MainActivity.this) ? View.VISIBLE : View.GONE);
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar sb) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar sb) {
+                saveBackgroundSetting("bgDim", sb.getProgress() * 5);
+            }
+        });
+        box.addView(dimLabel);
+        box.addView(dimBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        TextView hint = new TextView(this);
+        hint.setText("Abdunkeln macht Text und Knöpfe auf hellen Fotos besser lesbar. "
+                + "Bequemer hochladen geht über die Weboberfläche.");
+        hint.setTextColor(0xFF6B7785);
+        box.addView(hint);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(box);
+        new AlertDialog.Builder(this)
+                .setTitle("Hintergrund")
+                .setView(scroll)
+                .setPositiveButton("Fertig", null)
+                .show();
+    }
+
+    private void saveBackgroundSetting(String key, Object value) {
+        try {
+            settings = AppSettings.save(this, new JSONObject().put(key, value));
+            applyBackground();
+        } catch (JSONException e) {
+            Toast.makeText(this, "Nicht gespeichert: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Ausgewaehltes Bild im Hintergrund einlesen und uebernehmen. */
+    private void readBackgroundImage(Uri uri) {
+        Toast.makeText(this, "Bild wird übernommen …", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String error = null;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) {
+                    throw new IOException("Datei lässt sich nicht öffnen");
+                }
+                java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+                byte[] chunk = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(chunk)) > 0) {
+                    buf.write(chunk, 0, n);
+                    if (buf.size() > 40 * 1024 * 1024) {
+                        throw new IOException("Bild ist zu groß");
+                    }
+                }
+                Background.save(this, buf.toByteArray());
+            } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                error = e.getMessage();
+            }
+            String err = error;
+            runOnUiThread(() -> {
+                if (err != null) {
+                    Toast.makeText(this, "Bild nicht übernommen: " + err, Toast.LENGTH_LONG).show();
+                } else {
+                    applyBackground();
+                }
+            });
+        }).start();
     }
 
     private LinearLayout.LayoutParams barButtonParams() {
@@ -658,7 +860,8 @@ public class MainActivity extends Activity {
             TextView indicator = new TextView(this);
             indicator.setText(dots);
             indicator.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-            indicator.setTextColor(0xFF9E9E9E);
+            indicator.setTextColor(darkBg ? 0xFFE0E0E0 : 0xFF9E9E9E);
+            pageIndicator = indicator;
             indicator.setGravity(Gravity.CENTER);
             gridHolder.addView(indicator, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, dotsHeight, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
@@ -1321,6 +1524,10 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(pad, pad, pad, 0);
 
+        TextView bgButton = pillButton("Hintergrund ändern …", 0xFF5E35B1);
+        bgButton.setOnClickListener(x -> showBackgroundSettings());
+        box.addView(bgButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
+
         int[] sel = {
                 nearest(DIM_CHOICES, settings.dimSeconds),
                 settings.dimLevel,
@@ -1687,6 +1894,8 @@ public class MainActivity extends Activity {
             writeBackup(uri);
         } else if (requestCode == REQUEST_IMPORT) {
             readBackup(uri);
+        } else if (requestCode == REQUEST_BACKGROUND) {
+            readBackgroundImage(uri);
         }
     }
 
