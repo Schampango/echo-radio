@@ -41,7 +41,8 @@ Sprachsteuerung, Uhr und Weboberfläche. Die Installation steht in der
 
 Je nach **Art** des Knopfs passiert Folgendes:
 
-- **Radio-Stream:** spielt den Sender. Schickt der Sender Interpret und Titel mit,
+- **Radio-Stream:** spielt den Sender. Funktioniert mit normalen Streams (MP3/AAC) und mit
+  HLS-Adressen (`.m3u8`), wie sie z. B. die ARD für die Bundesliga-Konferenz nutzt. Schickt der Sender Interpret und Titel mit,
   stehen sie in der Statuszeile.
 - **Neueste Folge aus Podcast-Feed:** spielt die neueste Folge, z. B. die aktuellen Nachrichten.
   - Beim Stoppen merkt sich die App die Stelle. Beim nächsten Tippen geht es dort weiter,

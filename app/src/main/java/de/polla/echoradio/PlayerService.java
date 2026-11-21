@@ -21,6 +21,7 @@ import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Metadata;
+import androidx.media3.common.MimeTypes;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -393,7 +394,12 @@ public class PlayerService extends Service {
                 showTitle(title, t);
             }
         });
-        p.setMediaItem(MediaItem.fromUri(url));
+        MediaItem.Builder item = new MediaItem.Builder().setUri(url);
+        if (isHls(url)) {
+            // HLS sicher erkennen, auch wenn die Adresse nach Weiterleitung anders endet
+            item.setMimeType(MimeTypes.APPLICATION_M3U8);
+        }
+        p.setMediaItem(item.build());
         // Bei Podcasts erst an die gemerkte Stelle springen, dann abspielen
         p.setPlayWhenReady(resumeAt <= 0);
         p.prepare();
@@ -432,7 +438,8 @@ public class PlayerService extends Service {
             // Liefert ExoPlayer keine Songtitel, selbst beim Sender nachfragen
             final int t = token;
             icyFallback = () -> {
-                if (t == token && lastTitle == null && icy == null) {
+                // HLS hat keine ICY-Titel, dort nicht nachfragen
+                if (t == token && lastTitle == null && icy == null && !isHls(url)) {
                     Log.i(TAG, "Keine Titel von ExoPlayer, lese selbst mit");
                     icy = new IcyReader(url, title -> main.post(() -> showTitle(title, t)));
                     icy.start();
@@ -741,5 +748,15 @@ public class PlayerService extends Service {
         }
         String m = e.getMessage();
         return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m;
+    }
+
+    /** HLS-Playlist (.m3u8)? */
+    static boolean isHls(String url) {
+        String u = url.toLowerCase(java.util.Locale.ROOT);
+        int q = u.indexOf('?');
+        if (q >= 0) {
+            u = u.substring(0, q);
+        }
+        return u.endsWith(".m3u8") || u.contains("/hls/");
     }
 }
