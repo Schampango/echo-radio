@@ -16,6 +16,12 @@ final class Tile {
     static final String APP = "app";        // andere App starten (oder Webseite)
 
     static final int DEFAULT_COLOR = 0xFF00A0E3;
+    /** Logo-Groesse in Prozent des Knopfs; 60 % bleibt auch eckig innerhalb des gelben Rings. */
+    static final int DEFAULT_LOGO_SIZE = 60;
+    static final int MIN_LOGO_SIZE = 20;
+    static final int MAX_LOGO_SIZE = 100;
+    static final String SHAPE_SQUARE = "square";  // ganzes Logo sichtbar
+    static final String SHAPE_ROUND = "round";    // Logo kreisrund zugeschnitten
 
     String id;
     String label;
@@ -25,6 +31,8 @@ final class Tile {
     int color;
     /** Adresse eines Logos (leer = nur Beschriftung). */
     String logo = "";
+    int logoSize = DEFAULT_LOGO_SIZE;
+    String logoShape = SHAPE_SQUARE;
     /** Weitere Namen fuer die Sprachsteuerung, mit Komma getrennt. */
     String voice = "";
 
@@ -65,6 +73,8 @@ final class Tile {
         o.put("color", toHex(color));
         if (!logo.isEmpty()) {
             o.put("logo", logo);
+            o.put("logoSize", logoSize);
+            o.put("logoShape", logoShape);
         }
         if (!voice.isEmpty()) {
             o.put("voice", voice);
@@ -85,8 +95,18 @@ final class Tile {
         }
         Tile t = new Tile(id, o.optString("label"), o.optString("type", STREAM), o.optString("value"), color);
         t.logo = o.optString("logo").trim();
+        t.logoSize = clampLogoSize(o.optInt("logoSize", DEFAULT_LOGO_SIZE));
+        t.logoShape = SHAPE_ROUND.equals(o.optString("logoShape")) ? SHAPE_ROUND : SHAPE_SQUARE;
         t.voice = o.optString("voice").trim();
         return t;
+    }
+
+    static int clampLogoSize(int v) {
+        return Math.max(MIN_LOGO_SIZE, Math.min(MAX_LOGO_SIZE, v));
+    }
+
+    boolean roundLogo() {
+        return SHAPE_ROUND.equals(logoShape);
     }
 
     static String toHex(int color) {

@@ -52,10 +52,15 @@
     text-align: center; font-weight: 700; overflow: hidden; position: relative; padding: 12px; user-select: none; flex: none; }
   .circle.light { box-shadow: inset 0 0 0 2px #e0e0e0; }
   .circle .label { white-space: pre-line; line-height: 1.15; }
-  .circle img { display: none; max-width: 70%; max-height: 70%; object-fit: contain; }
+  .circle img { display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 60%; height: 60%; object-fit: contain; }
+  .circle img.round { object-fit: cover; border-radius: 50%; }
   .circle.has-logo img { display: block; }
   .circle.has-logo .label { display: none; }
-  .circle.playing { box-shadow: 0 0 0 5px var(--amber); }
+  /* Ring innen wie am Echo, damit man sieht, ob das Logo hineinragt */
+  .circle.playing { box-shadow: inset 0 0 0 5px var(--amber); }
+  .shape-btns { display: flex; gap: 8px; margin-top: 8px; }
+  .shape-btns .btn.on { border-color: var(--blue); background: #eef8fd; color: var(--blue); }
   .play { position: absolute; right: 12px; bottom: 8px; width: 34px; height: 34px; border-radius: 50%; border: none;
     background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); cursor: pointer; font-size: 13px; }
   .editor h2 { margin: 0 0 10px; font-size: 17px; }
@@ -375,6 +380,9 @@ function circleFor(t) {
   c.append(el("span", { class: "label", text: t.label || "—" }));
   if (t.logo) {
     const img = el("img", { alt: "" });
+    const size = Math.max(20, Math.min(100, +t.logoSize || 60));
+    img.style.width = img.style.height = size + "%";
+    if (t.logoShape === "round") img.classList.add("round");
     img.addEventListener("load", () => c.classList.add("has-logo"));
     img.addEventListener("error", () => img.remove());
     img.src = t.logo;
@@ -448,10 +456,14 @@ function renderEditor() {
   const type = TYPES.find((x) => x.id === t.type) || TYPES[0];
 
   box.append(el("h2", { text: "Knopf bearbeiten" }));
-  const preview = el("div", { class: "preview" }, circleFor(t));
+  // Vorschau immer mit gelbem Ring, damit man sieht, ob das Logo hineinragt
+  const previewCircle = () => { const c = circleFor(t); c.classList.add("playing"); return c; };
+  const preview = el("div", { class: "preview" }, previewCircle());
   box.append(preview);
+  let showSize = () => {};
   const changed = () => {
-    preview.replaceChildren(circleFor(t));
+    preview.replaceChildren(previewCircle());
+    showSize();
     renderGrid();
     scheduleSave();
   };
@@ -567,6 +579,33 @@ function renderEditor() {
   const logoField = field("Logo", logo, logoNote);
   logoField.append(el("div", { class: "row" }, [query, searchBtn, clearBtn]), results);
   box.append(logoField);
+
+  // Logo-Groesse und Form
+  const sizeText = el("b");
+  const sizeRange = el("input", { type: "range" });
+  sizeRange.min = 20; sizeRange.max = 100; sizeRange.step = 5;
+  sizeRange.value = t.logoSize || 60;
+  const sizeHint = el("div", { class: "note" });
+  const sq = el("button", { class: "btn small", text: "▢ Eckig" });
+  const rd = el("button", { class: "btn small", text: "◯ Rund" });
+  const updateShape = () => {
+    const round = t.logoShape === "round";
+    sq.classList.toggle("on", !round);
+    rd.classList.toggle("on", round);
+    sizeText.textContent = (t.logoSize || 60) + " %";
+    sizeHint.textContent = (!round && (t.logoSize || 60) > 65)
+      ? "Eckige Logos über 65 % können beim Abspielen in den gelben Ring ragen."
+      : "Eckig: ganzes Logo sichtbar · Rund: Logo als Kreis zugeschnitten";
+  };
+  sizeRange.addEventListener("input", () => { t.logoSize = +sizeRange.value; updateShape(); changed(); });
+  sq.addEventListener("click", () => { t.logoShape = "square"; updateShape(); changed(); });
+  rd.addEventListener("click", () => { t.logoShape = "round"; updateShape(); changed(); });
+  updateShape();
+  const sizeLabel = el("label", {}, [document.createTextNode("Logo-Größe: "), sizeText]);
+  const sizeField = el("div", { class: "field" }, [sizeLabel, sizeRange, el("div", { class: "shape-btns" }, [sq, rd]), sizeHint]);
+  showSize = () => { sizeField.style.display = t.logo ? "" : "none"; };
+  showSize();
+  box.append(sizeField);
 
   // Sprachbefehl
   const voice = el("input", { type: "text", placeholder: "z. B. Nachrichten, Deutschlandfunk" });
@@ -688,6 +727,8 @@ function normalize(list) {
       value: String(x.value || ""),
       color: /^#[0-9a-f]{6}$/i.test(x.color || "") ? x.color.toUpperCase() : "#00A0E3",
       logo: String(x.logo || ""),
+      logoSize: Math.max(20, Math.min(100, Math.round((+x.logoSize || 60) / 5) * 5)),
+      logoShape: x.logoShape === "round" ? "round" : "square",
       voice: String(x.voice || ""),
     };
   });
@@ -746,7 +787,7 @@ vol.addEventListener("change", async () => {
 });
 
 $("addBtn").addEventListener("click", () => {
-  const t = { id: newId(), label: "Neu", type: "stream", value: "", color: "#00A0E3", logo: "", voice: "" };
+  const t = { id: newId(), label: "Neu", type: "stream", value: "", color: "#00A0E3", logo: "", logoSize: 60, logoShape: "square", voice: "" };
   tiles.push(t);
   selectedId = t.id;
   renderGrid();

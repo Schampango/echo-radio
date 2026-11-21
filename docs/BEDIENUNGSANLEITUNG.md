@@ -156,6 +156,8 @@ Ein **langer Druck** öffnet den Editor auch außerhalb des Bearbeiten-Modus.
 | Ziel | Stream-Adresse, Feed-Adresse, Sendername oder App. Bei Apps hilft **App auswählen**. Mehrere Apps mit `\|` trennen, die erste vorhandene wird gestartet. |
 | Farbe | 12 Vorgaben oder eigener Farbcode `#RRGGBB` |
 | Logo | Bildadresse (PNG/JPG, kein SVG). **Logo suchen** findet Senderlogos bei radio-browser.info, **Vorschau** zeigt es an. |
+| Logo-Größe | 20–100 % des Knopfs, Standard 60 %. Eckige Logos über etwa 65 % ragen beim Abspielen in den gelben Ring. |
+| Form | **Eckig**: ganzes Logo sichtbar · **Rund**: Logo als Kreis zugeschnitten und ausgefüllt |
 | Position | **◀ nach vorne** / **nach hinten ▶** |
 | Löschen | entfernt den Knopf (mit Rückfrage) |
 
@@ -205,6 +207,8 @@ Bearbeiten-Modus unten in der Statuszeile. Computer oder Handy müssen im selben
 Die Felder sind dieselben wie am Echo (siehe [5](#der-editor)). Dazu kommen:
 
 - **Sprachbefehl:** weitere Namen, auf die die Sprachsteuerung hört, mit Komma getrennt.
+- **Logo-Größe und Form** mit Live-Vorschau. Die Vorschau zeigt immer den gelben Ring,
+  damit du siehst, ob das Logo beim Abspielen hineinragt.
 - **Logo-Suche** mit eigenem Suchfeld. Findet die Suche nichts, kannst du die Bildadresse eines
   Logos von der Webseite des Senders kopieren (Rechtsklick → *Bildadresse kopieren*).
 - **Speichern:** Änderungen werden ohnehin nach kurzer Pause automatisch übernommen.

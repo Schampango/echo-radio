@@ -28,6 +28,8 @@ import android.os.Looper;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.ViewOutlineProvider;
+import android.graphics.Outline;
 import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.view.View;
@@ -717,14 +719,25 @@ public class MainActivity extends Activity {
         FrameLayout frame = makeCircle(t.label, t.color, size, textPx);
         if (!t.logo.isEmpty()) {
             TextView label = (TextView) frame.getChildAt(0);
+            int logoPx = Math.round(size * t.logoSize / 100f);
             ImageView logo = new ImageView(this);
-            logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            int p = Math.round(size * 0.16f);
-            logo.setPadding(p, p, p, p);
+            if (t.roundLogo()) {
+                // Kreisrund zugeschnitten und ausgefuellt
+                logo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                logo.setOutlineProvider(new ViewOutlineProvider() {
+                    @Override
+                    public void getOutline(View v, Outline outline) {
+                        outline.setOval(0, 0, v.getWidth(), v.getHeight());
+                    }
+                });
+                logo.setClipToOutline(true);
+            } else {
+                // Ganzes Logo sichtbar
+                logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            }
             logo.setVisibility(View.GONE);
-            frame.addView(logo, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            LogoCache.load(this, t.logo, size, bitmap -> {
+            frame.addView(logo, new FrameLayout.LayoutParams(logoPx, logoPx, Gravity.CENTER));
+            LogoCache.load(this, t.logo, logoPx, bitmap -> {
                 if (bitmap != null) {
                     logo.setImageBitmap(bitmap);
                     logo.setVisibility(View.VISIBLE);
@@ -1013,6 +1026,70 @@ public class MainActivity extends Activity {
         logoButtons.addView(clearLogo, lbLp3);
         box.addView(logoButtons);
 
+        // Logo-Groesse und Form
+        int[] logoSizeSel = {tile.logoSize};
+        String[] logoShapeSel = {tile.logoShape};
+        TextView logoSizeLabel = new TextView(this);
+        logoSizeLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        logoSizeLabel.setPadding(0, dp(12), 0, 0);
+        SeekBar logoSizeBar = new SeekBar(this);
+        // 20 % bis 100 % in 5er-Schritten
+        logoSizeBar.setMax((Tile.MAX_LOGO_SIZE - Tile.MIN_LOGO_SIZE) / 5);
+        logoSizeBar.setProgress((logoSizeSel[0] - Tile.MIN_LOGO_SIZE) / 5);
+        logoSizeLabel.setText("Logo-Größe: " + logoSizeSel[0] + " %");
+        logoSizeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
+                logoSizeSel[0] = Tile.MIN_LOGO_SIZE + p * 5;
+                logoSizeLabel.setText("Logo-Größe: " + logoSizeSel[0] + " %"
+                        + (logoSizeSel[0] > 65 && Tile.SHAPE_SQUARE.equals(logoShapeSel[0])
+                        ? "  (Ecken können in den Rand ragen)" : ""));
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar sb) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar sb) {
+            }
+        });
+        box.addView(logoSizeLabel);
+        box.addView(logoSizeBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
+        LinearLayout shapeRow = new LinearLayout(this);
+        shapeRow.setOrientation(LinearLayout.HORIZONTAL);
+        TextView shapeSquare = pillButton("Eckig", 0xFF9E9E9E);
+        TextView shapeRound = pillButton("Rund", 0xFF9E9E9E);
+        Runnable markShape = () -> {
+            boolean round = Tile.SHAPE_ROUND.equals(logoShapeSel[0]);
+            ((GradientDrawable) shapeSquare.getBackground()).setColor(round ? 0xFF9E9E9E : 0xFF00A0E3);
+            ((GradientDrawable) shapeRound.getBackground()).setColor(round ? 0xFF00A0E3 : 0xFF9E9E9E);
+            // Hinweis zur Groesse aktualisieren
+            logoSizeBar.setProgress(logoSizeBar.getProgress());
+            logoSizeLabel.setText("Logo-Größe: " + logoSizeSel[0] + " %"
+                    + (logoSizeSel[0] > 65 && !round ? "  (Ecken können in den Rand ragen)" : ""));
+        };
+        shapeSquare.setOnClickListener(x -> {
+            logoShapeSel[0] = Tile.SHAPE_SQUARE;
+            markShape.run();
+        });
+        shapeRound.setOnClickListener(x -> {
+            logoShapeSel[0] = Tile.SHAPE_ROUND;
+            markShape.run();
+        });
+        markShape.run();
+        LinearLayout.LayoutParams shapeLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48));
+        shapeLp.setMarginEnd(dp(12));
+        shapeRow.addView(shapeSquare, shapeLp);
+        shapeRow.addView(shapeRound, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
+        TextView shapeNote = new TextView(this);
+        shapeNote.setText("Eckig: ganzes Logo sichtbar · Rund: Logo als Kreis zugeschnitten");
+        shapeNote.setTextColor(0xFF6B7785);
+        shapeNote.setPadding(0, dp(6), 0, 0);
+        box.addView(shapeRow);
+        box.addView(shapeNote);
+
         if (!isNew) {
             caption(box, "Position");
             LinearLayout moveRow = new LinearLayout(this);
@@ -1058,6 +1135,8 @@ public class MainActivity extends Activity {
                 tile.type = TYPES[selected[0]];
                 tile.color = parseColor(hexEdit.getText().toString(), chosenColor[0]);
                 tile.logo = logoEdit.getText().toString().trim();
+                tile.logoSize = Tile.clampLogoSize(logoSizeSel[0]);
+                tile.logoShape = logoShapeSel[0];
                 if (isNew) {
                     tiles.add(tile);
                 }
