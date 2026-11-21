@@ -549,11 +549,9 @@ function renderEditor() {
   logo.value = t.logo || "";
   const logoNote = el("div", { class: "note" });
   const updateLogoNote = () => {
-    const svg = /\.svg(\?|$)/i.test(t.logo || "");
-    logoNote.className = "note" + (svg ? " warn" : "");
-    logoNote.textContent = svg
-      ? "Achtung: SVG-Bilder kann der Echo nicht anzeigen – dort erscheint dann die Beschriftung."
-      : "Logos ersetzen auf dem Echo den Text im Kreis.";
+    logoNote.className = "note";
+    logoNote.textContent = "Logos ersetzen auf dem Echo den Text im Kreis. PNG, JPG, WebP, GIF und SVG gehen, "
+      + "ebenso eingebettete Bilder (data:image/…).";
   };
   updateLogoNote();
   logo.addEventListener("input", () => { t.logo = logo.value.trim(); updateLogoNote(); changed(); });

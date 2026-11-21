@@ -1185,7 +1185,7 @@ public class MainActivity extends Activity {
         LogoCache.load(this, address, dp(72), bitmap -> {
             preview.setImageBitmap(bitmap);
             if (bitmap == null && complain) {
-                Toast.makeText(this, "Logo konnte nicht geladen werden (SVG wird nicht unterstützt)",
+                Toast.makeText(this, "Logo konnte nicht geladen werden – Adresse im Browser prüfen",
                         Toast.LENGTH_LONG).show();
             }
         });

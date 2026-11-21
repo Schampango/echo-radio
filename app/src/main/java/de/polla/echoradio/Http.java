@@ -10,7 +10,8 @@ import java.nio.charset.StandardCharsets;
 /** Kleine HTTP-Hilfen. Folgt Weiterleitungen auch zwischen http und https. */
 final class Http {
 
-    static final String USER_AGENT = "EchoRadio/1.3 (Android)";
+    // Mit Projektadresse: Wikimedia u. a. lehnen Abrufe ohne aussagekraeftige Kennung ab
+    static final String USER_AGENT = "EchoRadio/1.12 (Android; https://github.com/Schampango/echo-radio)";
 
     /** Server hat mit einem Fehlerstatus geantwortet. */
     static final class StatusException extends IOException {

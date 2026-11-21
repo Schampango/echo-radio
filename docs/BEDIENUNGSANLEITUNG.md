@@ -156,7 +156,7 @@ Ein **langer Druck** öffnet den Editor auch außerhalb des Bearbeiten-Modus.
 | Art | Radio-Stream · Neueste Folge aus Podcast-Feed · Sender suchen · App oder Webseite öffnen |
 | Ziel | Stream-Adresse, Feed-Adresse, Sendername oder App. Bei Apps hilft **App auswählen**. Mehrere Apps mit `\|` trennen, die erste vorhandene wird gestartet. |
 | Farbe | 12 Vorgaben oder eigener Farbcode `#RRGGBB` |
-| Logo | Bildadresse (PNG/JPG, kein SVG). **Logo suchen** findet Senderlogos bei radio-browser.info, **Vorschau** zeigt es an. |
+| Logo | Bildadresse (PNG, JPG, WebP, SVG) oder eingebettetes Bild (`data:image/…`). **Logo suchen** findet Senderlogos bei radio-browser.info, **Vorschau** zeigt es an. |
 | Logo-Größe | 20–100 % des Knopfs, Standard 60 %. Eckige Logos über etwa 65 % ragen beim Abspielen in den gelben Ring. |
 | Form | **Eckig**: ganzes Logo sichtbar · **Rund**: Logo als Kreis zugeschnitten und ausgefüllt |
 | Position | **◀ nach vorne** / **nach hinten ▶** |
